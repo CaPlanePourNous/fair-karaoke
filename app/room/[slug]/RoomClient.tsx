@@ -34,6 +34,10 @@ export default function RoomClient({ slug }: { slug: string }) {
   const [msg, setMsg] = useState<string | null>(null);
   const [won, setWon] = useState(false);
 
+  // états de chargement pour éviter les doubles clics
+  const [submitLoading, setSubmitLoading] = useState(false);
+  const [lotteryLoading, setLotteryLoading] = useState(false);
+
   // ------ Stats d’attente ------
   const [stats, setStats] = useState<{ total_waiting: number; est_minutes: number } | null>(null);
   useEffect(() => {
@@ -124,25 +128,33 @@ export default function RoomClient({ slug }: { slug: string }) {
   }, [ding, won]);
 
   async function submit() {
+    if (submitLoading) return;
+    setSubmitLoading(true);
     setMsg(null);
-    if (!displayName.trim() || !title.trim() || !artist.trim()) {
-      setMsg('Remplis les 3 champs.');
-      return;
+    try {
+      if (!displayName.trim() || !title.trim() || !artist.trim()) {
+        setMsg('Remplis les 3 champs.');
+        return;
+      }
+      const r = await fetch('/api/requests', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          display_name: displayName.trim(),
+          title: title.trim(),
+          artist: artist.trim(),
+          karafun_id: kid?.karafun_id ?? null
+        })
+      });
+      const data = await r.json();
+      if (!r.ok) { setMsg(`Erreur: ${data.error || 'inconnue'}`); return; }
+      setMsg('Demande envoyée 👍');
+      setTitle(''); setArtist(''); setKid(null);
+    } catch {
+      setMsg("Erreur réseau lors de l'envoi.");
+    } finally {
+      setSubmitLoading(false);
     }
-    const r = await fetch('/api/requests', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        display_name: displayName.trim(),
-        title: title.trim(),
-        artist: artist.trim(),
-        karafun_id: kid?.karafun_id ?? null
-      })
-    });
-    const data = await r.json();
-    if (!r.ok) { setMsg(`Erreur: ${data.error || 'inconnue'}`); return; }
-    setMsg('Demande envoyée 👍');
-    setTitle(''); setArtist(''); setKid(null);
   }
 
   return (
@@ -153,7 +165,6 @@ export default function RoomClient({ slug }: { slug: string }) {
         <h1>Karaoké – {slug}</h1>
       )}
 
-      {/* ----- reste du code inchangé ----- */}
       {stats && (
         <p style={{
           margin: '8px 0 16px',
@@ -172,6 +183,7 @@ export default function RoomClient({ slug }: { slug: string }) {
         value={displayName}
         onChange={e => setDisplayName(e.target.value)}
         placeholder="Nom ou Surnom"
+        autoFocus
         style={{ width: '100%', padding: 8, margin: '6px 0 14px' }}
       />
 
@@ -208,12 +220,16 @@ export default function RoomClient({ slug }: { slug: string }) {
         style={{ width: '100%', padding: 8, margin: '6px 0 14px' }}
       />
 
-      <button onClick={submit} disabled={limitReached} style={{
-        padding: '10px 16px',
-        cursor: limitReached ? 'not-allowed' : 'pointer',
-        opacity: limitReached ? .6 : 1
-      }}>
-        Demander
+      <button
+        onClick={submit}
+        disabled={limitReached || submitLoading}
+        style={{
+          padding: '10px 16px',
+          cursor: limitReached || submitLoading ? 'not-allowed' : 'pointer',
+          opacity: limitReached || submitLoading ? .6 : 1
+        }}
+      >
+        {submitLoading ? "Envoi..." : "Demander"}
       </button>
 
       {limitReached && (
@@ -222,7 +238,7 @@ export default function RoomClient({ slug }: { slug: string }) {
         </p>
       )}
 
-      {msg && <p style={{ marginTop: 12 }}>{msg}</p>}
+      {msg && <p style={{ marginTop: 12 }} aria-live="polite">{msg}</p>}
 
       {kid?.url && (
         <p style={{ opacity: .7, marginTop: 8 }}>
@@ -234,62 +250,73 @@ export default function RoomClient({ slug }: { slug: string }) {
       <h2>🎁 Tirage au sort</h2>
       <p>Inscris ton nom pour participer (une inscription par personne).</p>
 
-     <button
-  onClick={async () => {
-    if (!displayName.trim()) {
-      setMsg('Renseigne ton nom avant de t’inscrire au tirage.');
-      return;
-    }
-    const r = await fetch('/api/lottery/register', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ display_name: displayName.trim() })
-    });
-    const d = await r.json();
-    if (!r.ok) setMsg('Erreur tirage : ' + (d.error || 'inconnue'));
-    else {
-      setMsg('Inscription au tirage enregistrée ✅');
-      if (d.id) saveEntryId(d.id);
-    }
-  }}
-  className={isLantignie ? styles.neonButton : undefined}
-  style={!isLantignie ? { padding: '8px 14px', cursor: 'pointer' } : undefined}
->
-  M’inscrire au tirage
-</button>
+      <button
+        onClick={async () => {
+          if (lotteryLoading) return;
+          if (!displayName.trim()) {
+            setMsg('Renseigne ton nom avant de t’inscrire au tirage.');
+            return;
+          }
+          setLotteryLoading(true);
+          try {
+            const r = await fetch('/api/lottery/register', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ display_name: displayName.trim() })
+            });
+            const d = await r.json();
+            if (!r.ok) setMsg('Erreur tirage : ' + (d.error || 'inconnue'));
+            else {
+              setMsg('Inscription au tirage enregistrée ✅');
+              if (d.id) saveEntryId(d.id);
+            }
+          } catch {
+            setMsg('Erreur réseau (tirage).');
+          } finally {
+            setLotteryLoading(false);
+          }
+        }}
+        className={isLantignie ? styles.neonButton : undefined}
+        style={!isLantignie ? { padding: '8px 14px', cursor: lotteryLoading ? 'wait' : 'pointer', opacity: lotteryLoading ? .7 : 1 } : undefined}
+        disabled={lotteryLoading}
+      >
+        {lotteryLoading ? "..." : "M’inscrire au tirage"}
+      </button>
 
-{!soundReady && (
-  <p style={{ marginTop: 8 }}>
-    🔊 Pour être alerté si tu es tiré, active le son :
-    <button onClick={armSound} style={{ marginLeft: 8, padding: '6px 10px' }}>
-      Activer le son
-    </button>
-  </p>
-)}
+      {!soundReady && (
+        <p style={{ marginTop: 8 }}>
+          🔊 Pour être alerté si tu es tiré, active le son :
+          <button onClick={armSound} style={{ marginLeft: 8, padding: '6px 10px' }}>
+            Activer le son
+          </button>
+        </p>
+      )}
 
-{won && (
-  <div
-    style={{
-      position: 'fixed',
-      inset: 0,
-      background: '#1db954',
-      color: '#fff',
-      display: 'flex',
-      alignItems: 'center',
-      justifyContent: 'center',
-      flexDirection: 'column',
-      zIndex: 9999,
-      textAlign: 'center',
-      padding: '20px'
-    }}
-  >
-    <div style={{ fontSize: 28, marginBottom: 8 }}>🎉 TU AS GAGNÉ ! 🎉</div>
-    <div style={{ fontSize: 20, opacity: 0.9 }}>
-      {displayName ? displayName : 'Bravo !'}
-    </div>
-    <div style={{ marginTop: 16, fontSize: 14, opacity: 0.8 }}>
-      Attends que l’animateur te fasse signe 😉
-    </div>
-  </div>
-)}
-
+      {won && (
+        <div
+          style={{
+            position: 'fixed',
+            inset: 0,
+            background: '#1db954',
+            color: '#fff',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            flexDirection: 'column',
+            zIndex: 9999,
+            textAlign: 'center',
+            padding: '20px'
+          }}
+        >
+          <div style={{ fontSize: 28, marginBottom: 8 }}>🎉 TU AS GAGNÉ ! 🎉</div>
+          <div style={{ fontSize: 20, opacity: 0.9 }}>
+            {displayName ? displayName : 'Bravo !'}
+          </div>
+          <div style={{ marginTop: 16, fontSize: 14, opacity: 0.8 }}>
+            Attends que l’animateur te fasse signe 😉
+          </div>
+        </div>
+      )}
+    </main>
+  );
+}

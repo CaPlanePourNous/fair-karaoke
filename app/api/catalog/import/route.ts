@@ -1,7 +1,7 @@
 // app/api/catalog/import/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { parse } from "csv-parse/sync";
-import { createServerSupabaseClient } from "@/lib/supabaseServer";
+import { createAdminSupabaseClient } from "@/lib/supabaseServer";
 
 type Row = Record<string, string>;
 
@@ -15,12 +15,15 @@ function pick(obj: Row, keys: string[]) {
 
 export async function POST(req: NextRequest) {
   try {
-    const { url } = await req.json().catch(() => ({}));
+    const body = await req.json().catch(() => ({} as { url?: string }));
+    const configured = process.env.KARAFUN_CSV_URL;
     const csvUrl =
-      url ||
+      body.url?.trim() ||
+      (configured && configured.trim()) ||
+      // fallback (évite l'échec si l'env n'est pas encore posée)
       "https://www.karafun.fr/cl/3107312/de746f0516a28e34c9802584192dc6d3/";
 
-    // 1) Télécharge le CSV
+    // 1) Télécharger le CSV
     const res = await fetch(csvUrl, { cache: "no-store" });
     if (!res.ok) {
       return NextResponse.json(
@@ -30,32 +33,33 @@ export async function POST(req: NextRequest) {
     }
     const text = await res.text();
 
-    // 2) Parse CSV (auto colonnes, ; ou ,)
+    // 2) Auto-détection du délimiteur sur la ligne d'entête
+    const header = (text.split(/\r?\n/, 1)[0] || "").trim();
+    const delimiter = header.includes(";") ? ";" : ",";
+    // (Option) si ni ; ni , détectés, tente ; par défaut
+    const chosen = delimiter || ";";
+
+    // 3) Parse CSV
     const rows: Row[] = parse(text, {
       columns: true,
       skip_empty_lines: true,
       relax_column_count: true,
-      delimiter: undefined, // auto
       bom: true,
       trim: true,
+      delimiter: chosen,
     });
 
-    // 3) Map -> { karafun_id, title, artist, duration_seconds }
+    // 4) Normalisation → table public.songs
     const mapped = rows
       .map((r) => {
-        const title = pick(r, ["title", "Title", "TITRE"]);
-        const artist = pick(r, ["artist", "Artist", "ARTISTE"]);
-        // Selon exports KaraFun, l'id peut s’appeler id, karafun_id, ref, etc.
-        const karafun_id = pick(r, ["karafun_id", "id", "Id", "ID", "KFN"]);
-        // durée "mm:ss" ou "m:ss"
-        const durRaw = pick(r, ["duration", "Duration", "DURATION", "Durée"]);
-        let duration_seconds: number | null = null;
-        if (durRaw) {
-          const m = String(durRaw).match(/^(\d{1,2}):(\d{2})$/);
-          if (m) duration_seconds = parseInt(m[1], 10) * 60 + parseInt(m[2], 10);
-          else if (!Number.isNaN(Number(durRaw))) duration_seconds = Number(durRaw);
-        }
-        if (!title || !artist || !karafun_id) return null;
+        const karafun_id = pick(r, ["Id", "id", "KFN", "karafun_id"]);
+        const title = pick(r, ["Title", "title", "TITRE"]);
+        const artist = pick(r, ["Artist", "artist", "ARTISTE"]);
+
+        // Ton CSV de référence n'a pas de durée => null
+        const duration_seconds: number | null = null;
+
+        if (!karafun_id || !title || !artist) return null;
         return { karafun_id, title, artist, duration_seconds };
       })
       .filter(Boolean) as {
@@ -66,21 +70,33 @@ export async function POST(req: NextRequest) {
     }[];
 
     if (mapped.length === 0) {
-      return NextResponse.json({ imported: 0, warning: "no_mapped_rows" });
+      return NextResponse.json(
+        { imported: 0, warning: "no_mapped_rows", delimiter: chosen },
+        { status: 200 }
+      );
     }
 
-    // 4) Upsert Supabase
-    const supabase = createServerSupabaseClient();
-    const { error } = await supabase
-      .from("songs")
-      .upsert(mapped, { onConflict: "karafun_id" });
-
-    if (error) {
-      console.error("[catalog/import] upsert error:", error);
-      return NextResponse.json({ error: "upsert_failed" }, { status: 500 });
+    // 5) Upsert en chunks via client admin (bypass RLS)
+    const supabase = createAdminSupabaseClient();
+    const chunkSize = 1000;
+    for (let i = 0; i < mapped.length; i += chunkSize) {
+      const chunk = mapped.slice(i, i + chunkSize);
+      const { error } = await supabase
+        .from("songs")
+        .upsert(chunk, { onConflict: "karafun_id" });
+      if (error) {
+        console.error("[catalog/import] upsert_failed_chunk", { i, error });
+        return NextResponse.json(
+          { error: "upsert_failed_chunk", at: i },
+          { status: 500 }
+        );
+      }
     }
 
-    return NextResponse.json({ imported: mapped.length }, { status: 200 });
+    return NextResponse.json(
+      { imported: mapped.length, delimiter: chosen },
+      { status: 200 }
+    );
   } catch (e) {
     console.error("[catalog/import] fatal:", e);
     return NextResponse.json({ error: "fatal" }, { status: 500 });

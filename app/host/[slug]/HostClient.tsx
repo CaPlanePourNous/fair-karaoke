@@ -36,13 +36,16 @@ export default function HostClient({ slug }: { slug: string }) {
 
   async function playNext() {
     setLoading(true);
-    await fetch("/api/host/play", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ next: true }),
-    });
-    await refresh();
-    setLoading(false);
+    try {
+      await fetch("/api/host/play", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ next: true }),
+      });
+      await refresh();
+    } finally {
+      setLoading(false);
+    }
   }
 
   useEffect(() => {
@@ -52,14 +55,15 @@ export default function HostClient({ slug }: { slug: string }) {
   }, []);
 
   return (
-    <main style={{ maxWidth: 720, margin: "30px auto", padding: "0 16px" }}>
+    <main style={{ maxWidth: 720, margin: "0 auto", padding: "16px" }}>
       <h1>🎤 File d’attente — {slug}</h1>
 
       <section style={{ marginTop: 24 }}>
         <h2>En cours</h2>
-        {data.playing ? (
+        {data?.playing ? (
           <p>
-            ▶ <strong>{data.playing.title}</strong> — {data.playing.artist}{" "}
+            <span aria-hidden>▶</span>{" "}
+            <strong>{data.playing.title}</strong> — {data.playing.artist}{" "}
             ({data.playing.display_name || "?"})
           </p>
         ) : (
@@ -68,7 +72,12 @@ export default function HostClient({ slug }: { slug: string }) {
         <button
           onClick={playNext}
           disabled={loading}
-          style={{ padding: "8px 12px", marginTop: 8 }}
+          style={{
+            padding: "8px 12px",
+            marginTop: 8,
+            cursor: loading ? "wait" : "pointer",
+            opacity: loading ? 0.7 : 1,
+          }}
         >
           ⏭ Passer à la suivante
         </button>
@@ -79,12 +88,11 @@ export default function HostClient({ slug }: { slug: string }) {
         {data.waiting.length === 0 ? (
           <p>Aucun titre en attente.</p>
         ) : (
-          <ul>
+          <ul style={{ paddingLeft: 0, listStyle: "none" }}>
             {data.waiting.map((r) => (
-              <li key={r.id}>
+              <li key={r.id} style={{ marginBottom: 6 }}>
                 {r.isNew && <span style={{ color: "green" }}>🆕 </span>}
-                <strong>{r.title}</strong> — {r.artist}{" "}
-                ({r.display_name || "?"})
+                <strong>{r.title}</strong> — {r.artist} ({r.display_name || "?"})
               </li>
             ))}
           </ul>
@@ -96,11 +104,10 @@ export default function HostClient({ slug }: { slug: string }) {
         {data.played.length === 0 ? (
           <p>Aucun titre terminé.</p>
         ) : (
-          <ul>
+          <ul style={{ paddingLeft: 0, listStyle: "none" }}>
             {data.played.map((r) => (
-              <li key={r.id}>
-                <strong>{r.title}</strong> — {r.artist}{" "}
-                ({r.display_name || "?"})
+              <li key={r.id} style={{ marginBottom: 6 }}>
+                <strong>{r.title}</strong> — {r.artist} ({r.display_name || "?"})
               </li>
             ))}
           </ul>

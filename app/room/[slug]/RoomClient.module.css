@@ -1,52 +1,6 @@
-/* --- déjà ajouté plus haut ---
-.neonTitle { ... }
-@keyframes neonPulse { ... }
-*/
-
-/* Bouton style affiche (néon rose/bleu) */
-.neonButton {
-  position: relative;
-  display: inline-block;
-  border: none;
-  border-radius: 999px;
-  padding: 10px 16px;
-  font-weight: 600;
-  background: linear-gradient(90deg, #ff3bd4, #5be1ff);
-  color: #0b0b0b;              /* lisible sur mobile dark mode */
-  cursor: pointer;
-  transition: transform .12s ease, box-shadow .12s ease, opacity .12s ease;
-  box-shadow:
-    0 0 10px rgba(255, 59, 212, .5),
-    0 0 14px rgba(91, 225, 255, .35);
-}
-
-.neonButton:hover { transform: translateY(-1px); }
-.neonButton:active { transform: translateY(0); }
-
-/* Glow externe animé (léger) */
-.neonButton::after {
-  content: "";
-  position: absolute; inset: -6px;
-  border-radius: 999px;
-  background: radial-gradient(40% 60% at 50% 50%,
-    rgba(255, 59, 212, .35), rgba(91, 225, 255, .25), transparent 70%);
-  filter: blur(8px);
-  z-index: -1;
-  animation: neonSoft 2.2s infinite alternate;
-}
-
-@keyframes neonSoft {
-  from { opacity: .65; }
-  to   { opacity: .95; }
-}
-
-/* Accessibilité & états */
-.neonButton:focus-visible {
-  outline: 2px solid #5be1ff;
-  outline-offset: 3px;
-}
-.neonButton[disabled] {
-  opacity: .55;
-  cursor: not-allowed;
-  box-shadow: none;
-}
+/* Fichier minimal pour éviter l'erreur de build. Aucun style. */
+.title {}
+.room {}
+.lottery {}
+.card {}
+.neonButton {}

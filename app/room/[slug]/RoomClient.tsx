@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { createClient } from '@supabase/supabase-js';
+import styles from "./RoomClient.module.css";
 
 type Suggestion = {
   title: string;
@@ -24,6 +25,8 @@ function loadEntryId() {
 }
 
 export default function RoomClient({ slug }: { slug: string }) {
+  const isLantignie = slug.toLowerCase() === "lantignie";
+
   const [displayName, setDisplayName] = useState('');
   const [title, setTitle] = useState('');
   const [artist, setArtist] = useState('');
@@ -69,7 +72,7 @@ export default function RoomClient({ slug }: { slug: string }) {
     setMsg(null);
   }
 
-  // ------ Son (armement sur mobile) ------
+  // ------ Son ------
   const [soundReady, setSoundReady] = useState(false);
   const [ding, setDing] = useState<HTMLAudioElement | null>(null);
   function armSound() {
@@ -143,16 +146,21 @@ export default function RoomClient({ slug }: { slug: string }) {
   }
 
   return (
-    <main style={{ maxWidth: 680, margin: '30px auto', padding: '0 16px' }}>
-      <h1>Karaoké — {slug}</h1>
+    <main style={{ maxWidth: 720, margin: "0 auto", padding: "16px" }}>
+      {isLantignie ? (
+        <h1 className={styles.neonTitle}>🎤 Karaoké – Lantignié 🎶</h1>
+      ) : (
+        <h1>Karaoké – {slug}</h1>
+      )}
 
+      {/* ----- reste du code inchangé ----- */}
       {stats && (
         <p style={{
           margin: '8px 0 16px',
           padding: '8px 12px',
           background: '#f6f6f6',
           borderRadius: 8,
-          color: '#000'   // assure lisible en dark mode
+          color: '#000'
         }}>
           En attente : <strong>{stats.total_waiting}</strong> • Estimation ≈ <strong>{stats.est_minutes} min</strong>
           {limitReached && <span style={{ color: '#b00', marginLeft: 8 }}> (liste pleine)</span>}
@@ -226,48 +234,62 @@ export default function RoomClient({ slug }: { slug: string }) {
       <h2>🎁 Tirage au sort</h2>
       <p>Inscris ton nom pour participer (une inscription par personne).</p>
 
-      <button
-        onClick={async () => {
-          if (!displayName.trim()) { setMsg('Renseigne ton nom avant de t’inscrire au tirage.'); return; }
-          const r = await fetch('/api/lottery/register', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ display_name: displayName.trim() })
-          });
-          const d = await r.json();
-          if (!r.ok) setMsg('Erreur tirage : ' + (d.error || 'inconnue'));
-          else {
-            setMsg('Inscription au tirage enregistrée ✅');
-            if (d.id) saveEntryId(d.id);
-          }
-        }}
-        style={{ padding: '8px 14px', cursor: 'pointer' }}
-      >
-        M’inscrire au tirage
-      </button>
+     <button
+  onClick={async () => {
+    if (!displayName.trim()) {
+      setMsg('Renseigne ton nom avant de t’inscrire au tirage.');
+      return;
+    }
+    const r = await fetch('/api/lottery/register', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ display_name: displayName.trim() })
+    });
+    const d = await r.json();
+    if (!r.ok) setMsg('Erreur tirage : ' + (d.error || 'inconnue'));
+    else {
+      setMsg('Inscription au tirage enregistrée ✅');
+      if (d.id) saveEntryId(d.id);
+    }
+  }}
+  className={isLantignie ? styles.neonButton : undefined}
+  style={!isLantignie ? { padding: '8px 14px', cursor: 'pointer' } : undefined}
+>
+  M’inscrire au tirage
+</button>
 
-      {!soundReady && (
-        <p style={{ marginTop: 8 }}>
-          🔊 Pour être alerté si tu es tiré, active le son :
-          <button onClick={armSound} style={{ marginLeft: 8, padding: '6px 10px' }}>Activer le son</button>
-        </p>
-      )}
+{!soundReady && (
+  <p style={{ marginTop: 8 }}>
+    🔊 Pour être alerté si tu es tiré, active le son :
+    <button onClick={armSound} style={{ marginLeft: 8, padding: '6px 10px' }}>
+      Activer le son
+    </button>
+  </p>
+)}
 
-      {won && (
-        <div style={{
-          position: 'fixed', inset: 0, background: '#1db954', color: '#fff',
-          display: 'flex', alignItems: 'center', justifyContent: 'center',
-          flexDirection: 'column', zIndex: 9999, textAlign: 'center', padding: '20px'
-        }}>
-          <div style={{ fontSize: 28, marginBottom: 8 }}>🎉 TU AS GAGNÉ ! 🎉</div>
-          <div style={{ fontSize: 20, opacity: .9 }}>
-            {displayName ? displayName : 'Bravo !'}
-          </div>
-          <div style={{ marginTop: 16, fontSize: 14, opacity: .8 }}>
-            Attends que l’animateur te fasse signe 😉
-          </div>
-        </div>
-      )}
-    </main>
-  );
-}
+{won && (
+  <div
+    style={{
+      position: 'fixed',
+      inset: 0,
+      background: '#1db954',
+      color: '#fff',
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      flexDirection: 'column',
+      zIndex: 9999,
+      textAlign: 'center',
+      padding: '20px'
+    }}
+  >
+    <div style={{ fontSize: 28, marginBottom: 8 }}>🎉 TU AS GAGNÉ ! 🎉</div>
+    <div style={{ fontSize: 20, opacity: 0.9 }}>
+      {displayName ? displayName : 'Bravo !'}
+    </div>
+    <div style={{ marginTop: 16, fontSize: 14, opacity: 0.8 }}>
+      Attends que l’animateur te fasse signe 😉
+    </div>
+  </div>
+)}
+

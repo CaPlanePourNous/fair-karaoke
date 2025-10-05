@@ -1,58 +1,48 @@
 // app/api/search/route.ts
 import { NextResponse } from 'next/server';
-import path from 'node:path';
-import fs from 'node:fs';
+import Papa from 'papaparse';
 
-type Suggestion = { title: string; artist: string; karafun_id?: string; url?: string };
+export const runtime = 'nodejs'; // PapaParse nécessite Node, pas Edge.
 
-// Petit cache process-global pour éviter de recharger à chaque appel
-let CATALOG: Suggestion[] | null = null;
-let CATALOG_TRIED = false;
+type Row = {
+  title: string;
+  artist: string;
+  karafun_id?: string;
+  url?: string;
+};
 
-function loadCatalogOnce() {
-  if (CATALOG_TRIED) return;
-  CATALOG_TRIED = true;
-  try {
-    // Mets ton fichier ici si tu en as un (même format qu’avant)
-    // Exemple: [{ "title":"...", "artist":"...", "karafun_id":"12345" }, ...]
-    const p = path.join(process.cwd(), 'data', 'karafun_catalog.json');
-    const raw = fs.readFileSync(p, 'utf8');
-    const arr = JSON.parse(raw);
-    if (Array.isArray(arr)) {
-      // Normalise un minimum
-      CATALOG = arr.map((x: any) => ({
-        title: String(x.title || ''),
-        artist: String(x.artist || ''),
-        karafun_id: x.karafun_id ? String(x.karafun_id) : undefined,
-        url: x.karafun_id ? `https://www.karafun.fr/karaoke/${x.karafun_id}/` : undefined,
-      }));
-      console.log(`[search] catalogue chargé (${CATALOG.length} titres).`);
-    } else {
-      CATALOG = [];
-      console.warn(`[search] catalogue JSON invalide (array attendu).`);
-    }
-  } catch (e: any) {
-    // Pas de fichier ? Ce n’est pas bloquant : on renverra []
-    CATALOG = [];
-    console.warn('[search] aucun fichier catalogue local trouvé (OK pour MVP).', e?.message || e);
+// --- Config ---
+const REMOTE_CSV =
+  'https://www.karafun.fr/cl/3107312/de746f0516a28e34c9802584192dc6d3/'; // ton lien
+const LOCAL_CSV_PATH = '/karafun.csv';   // mets le fichier dans /public/karafun.csv
+const LOCAL_JSON_PATH = '/karafun.json'; // fallback si tu préfères le JSON
+const MAX_RESULTS = 20;
+const REVALIDATE_MS = 10 * 60 * 1000; // 10 minutes
+
+// --- Cache en mémoire ---
+let CACHE: { data: Row[]; ts: number } | null = null;
+
+// --- utilitaire de normalisation pour la recherche ---
+function norm(s: string) {
+  return s
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/\p{Diacritic}/gu, '')
+    .trim();
+}
+
+// --- helpers ---
+async function fetchText(url: string) {
+  const res = await fetch(url, { cache: 'no-store' });
+  if (!res.ok) throw new Error(`fetch failed ${res.status} for ${url}`);
+  return res.text();
+}
+
+function csvToRows(csv: string): Row[] {
+  const parsed = Papa.parse(csv, { header: true, skipEmptyLines: true });
+  if (parsed.errors?.length) {
+    // je n’édulcore pas : on remonte la première erreur
+    throw new Error(`CSV parse error: ${parsed.errors[0].message}`);
   }
-}
-
-export async function GET(req: Request) {
-  loadCatalogOnce();
-  const { searchParams } = new URL(req.url);
-  const q = (searchParams.get('q') || '').trim();
-  if (!q || q.length < 2) return NextResponse.json([]);
-
-  // Si pas de catalogue, renvoyer [] proprement
-  if (!CATALOG || !CATALOG.length) return NextResponse.json([]);
-
-  const tokens = q.toLowerCase().split(/\s+/).filter(Boolean);
-  // Filtrage très simple: tous les tokens doivent apparaître dans titre ou artiste
-  const res = CATALOG.filter((s) => {
-    const hay = (s.title + ' ' + s.artist).toLowerCase();
-    return tokens.every(t => hay.includes(t));
-  }).slice(0, 25);
-
-  return NextResponse.json(res);
-}
+  const rows = (parsed.data as any[]).map((r) => {
+    const title = (r.title ?? r.TITLE ?? r.Titre ?? '').toString(

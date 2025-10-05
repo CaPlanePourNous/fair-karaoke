@@ -1,153 +1,236 @@
-// app/host/[slug]/HostClient.tsx
 "use client";
-import { useEffect, useState } from "react";
 
-type Req = {
-  id: string;
+import { useEffect, useMemo, useState } from "react";
+
+type Item = {
+  id?: string | number;
   title: string;
   artist: string;
-  display_name: string | null;
-  isNew?: boolean;
+  display_name?: string; // nom/surnom de la personne
 };
 
-type QueueData = {
-  playing: Req | null;
-  waiting: Req[];
-  played: Req[];
+type HostQueuePayload = {
+  playing?: Item | null;
+  waiting?: Item[];
+  played?: Item[];
 };
 
 export default function HostClient({ slug }: { slug: string }) {
-  const [data, setData] = useState<QueueData>({
+  const isLantignie = slug.toLowerCase() === "lantignie";
+
+  const [data, setData] = useState<HostQueuePayload>({
     playing: null,
     waiting: [],
     played: [],
   });
-  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
 
-  async function refresh() {
+  // --- Fetch queue periodically ---
+  const fetchQueue = async () => {
     try {
-      const r = await fetch("/api/host/queue");
-      const d = await r.json();
-      setData(d);
-    } catch (e) {
-      console.error(e);
-    }
-  }
-
-  async function playNext() {
-    setLoading(true);
-    try {
-      await fetch("/api/host/play", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ next: true }),
+      setRefreshing(true);
+      const r = await fetch("/api/host/queue", { cache: "no-store" });
+      if (!r.ok) throw new Error("HTTP " + r.status);
+      const d = (await r.json()) as HostQueuePayload;
+      setData({
+        playing: d?.playing ?? null,
+        waiting: Array.isArray(d?.waiting) ? d.waiting : [],
+        played: Array.isArray(d?.played) ? d.played : [],
       });
-      await refresh();
+      setError(null);
+    } catch (e: any) {
+      setError("Impossible de charger la file");
     } finally {
-      setLoading(false);
+      setRefreshing(false);
     }
-  }
-
-  async function importCatalog() {
-    try {
-      const r = await fetch("/api/catalog/import", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          url: "https://www.karafun.fr/cl/3107312/de746f0516a28e34c9802584192dc6d3/",
-        }),
-      });
-      const d = await r.json();
-      if (!r.ok) {
-        alert("Import raté : " + (d?.error || "inconnu"));
-      } else {
-        alert(`Import OK : ${d.imported} titres`);
-      }
-    } catch (e) {
-      alert("Erreur réseau lors de l’import.");
-    }
-  }
+  };
 
   useEffect(() => {
-    refresh();
-    const it = setInterval(refresh, 5000);
+    fetchQueue();
+    const it = setInterval(fetchQueue, 5000);
     return () => clearInterval(it);
   }, []);
 
-  return (
-    <main style={{ maxWidth: 720, margin: "0 auto", padding: "16px" }}>
-      <h1>🎤 File d’attente — {slug}</h1>
+  // --- Helpers ---
+  const copy = async (txt: string) => {
+    try {
+      await navigator.clipboard.writeText(txt);
+    } catch {
+      // fallback textarea
+      const ta = document.createElement("textarea");
+      ta.value = txt;
+      ta.style.position = "fixed";
+      ta.style.left = "-9999px";
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand("copy");
+      document.body.removeChild(ta);
+    }
+  };
 
-      {/* Bouton d'import du catalogue */}
-      <button
-        onClick={importCatalog}
+  const copyTitleArtist = (it: Item) => copy(`${it.title} — ${it.artist}`);
+  const copySinger = (it: Item) => copy(it.display_name ?? "");
+
+  const waitingFirstTwo = useMemo(() => (data.waiting ?? []).slice(0, 2), [data.waiting]);
+
+  // --- UI styles (sobres) ---
+  const card: React.CSSProperties = {
+    border: "1px solid #e6e6e6",
+    borderRadius: 10,
+    padding: 12,
+    background: "#fff",
+  };
+  const btn: React.CSSProperties = {
+    display: "inline-flex",
+    alignItems: "center",
+    gap: 8,
+    padding: "8px 12px",
+    border: "1px solid #ddd",
+    borderRadius: 999,
+    background: "#f7f7f7",
+    cursor: "pointer",
+  };
+
+  return (
+    <main style={{ maxWidth: 1100, margin: "0 auto", padding: 16 }}>
+      <h1>🎤 Karaoké — {isLantignie ? "Lantignié" : slug}</h1>
+
+      {error && (
+        <p style={{ color: "#b00", margin: "8px 0" }}>{error}</p>
+      )}
+
+      {/* Zone 1 : En cours */}
+      <section style={{ ...card, marginTop: 12, marginBottom: 16 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
+          <h2 style={{ margin: 0 }}>En cours</h2>
+          <button onClick={fetchQueue} style={btn} disabled={refreshing} aria-busy={refreshing}>
+            {refreshing ? "Rafraîchissement..." : "Rafraîchir"}
+          </button>
+        </div>
+
+        {data.playing ? (
+          <div style={{ marginTop: 8 }}>
+            <div style={{ fontSize: 20, fontWeight: 700 }}>
+              {data.playing.title} — {data.playing.artist}
+            </div>
+            {data.playing.display_name && (
+              <div style={{ opacity: 0.8, marginTop: 4 }}>
+                Chanteur·euse : <strong>{data.playing.display_name}</strong>
+              </div>
+            )}
+            <div style={{ marginTop: 10, display: "flex", gap: 8, flexWrap: "wrap" }}>
+              <button style={btn} onClick={() => copyTitleArtist(data.playing!)}>Copier Titre+Artiste</button>
+              {data.playing.display_name && (
+                <button style={btn} onClick={() => copySinger(data.playing!)}>Copier Nom</button>
+              )}
+            </div>
+          </div>
+        ) : (
+          <p style={{ marginTop: 8, opacity: 0.8 }}>Aucune lecture en cours.</p>
+        )}
+      </section>
+
+      {/* Zone 2 : grille 2 colonnes (Attente / Passées) */}
+      <section
         style={{
-          marginTop: 12,
-          padding: "8px 14px",
-          cursor: "pointer",
-          background: "#eee",
-          border: "1px solid #ccc",
-          borderRadius: 6,
+          display: "grid",
+          gridTemplateColumns: "1fr 1fr",
+          gap: 16,
         }}
       >
-        📥 Mettre à jour le catalogue
-      </button>
+        {/* Colonne gauche : File d'attente */}
+        <div style={card}>
+          <h2 style={{ marginTop: 0 }}>File d’attente</h2>
+          {Array.isArray(data.waiting) && data.waiting.length > 0 ? (
+            <ul style={{ listStyle: "none", padding: 0, margin: "8px 0 0 0" }}>
+              {data.waiting.map((it, idx) => (
+                <li
+                  key={(it.id ?? idx).toString()}
+                  style={{
+                    padding: "8px 0",
+                    borderBottom: "1px solid #f1f1f1",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                    gap: 8,
+                  }}
+                >
+                  <div style={{ minWidth: 0 }}>
+                    <div style={{ fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                      {it.title} — {it.artist}
+                    </div>
+                    {it.display_name && (
+                      <div style={{ opacity: 0.8, fontSize: 13 }}>{it.display_name}</div>
+                    )}
+                  </div>
 
-      <section style={{ marginTop: 24 }}>
-        <h2>En cours</h2>
-        {data?.playing ? (
-          <p>
-            <span aria-hidden>▶</span>{" "}
-            <strong>{data.playing.title}</strong> — {data.playing.artist}{" "}
-            ({data.playing.display_name || "?"})
-          </p>
-        ) : (
-          <p>Aucune chanson en cours.</p>
-        )}
-        <button
-          onClick={playNext}
-          disabled={loading}
-          style={{
-            padding: "8px 12px",
-            marginTop: 8,
-            cursor: loading ? "wait" : "pointer",
-            opacity: loading ? 0.7 : 1,
-          }}
-        >
-          ⏭ Passer à la suivante
-        </button>
+                  {/* Boutons de copie SEULEMENT pour les deux premiers de la file */}
+                  {idx < 2 && (
+                    <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                      <button style={btn} onClick={() => copyTitleArtist(it)} title="Copier Titre + Artiste">
+                        Copier T+A
+                      </button>
+                      {it.display_name && (
+                        <button style={btn} onClick={() => copySinger(it)} title="Copier Nom">
+                          Copier Nom
+                        </button>
+                      )}
+                    </div>
+                  )}
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p style={{ marginTop: 8, opacity: 0.8 }}>Personne en attente.</p>
+          )}
+        </div>
+
+        {/* Colonne droite : Chansons passées */}
+        <div style={card}>
+          <h2 style={{ marginTop: 0 }}>Passées</h2>
+          {Array.isArray(data.played) && data.played.length > 0 ? (
+            <ul style={{ listStyle: "none", padding: 0, margin: "8px 0 0 0" }}>
+              {data.played.map((it, idx) => (
+                <li
+                  key={(it.id ?? `p-${idx}`).toString()}
+                  style={{
+                    padding: "8px 0",
+                    borderBottom: "1px solid #f1f1f1",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                    gap: 8,
+                  }}
+                >
+                  <div style={{ minWidth: 0 }}>
+                    <div style={{ fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                      {it.title} — {it.artist}
+                    </div>
+                    {it.display_name && (
+                      <div style={{ opacity: 0.8, fontSize: 13 }}>{it.display_name}</div>
+                    )}
+                  </div>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p style={{ marginTop: 8, opacity: 0.8 }}>Aucune chanson passée pour l’instant.</p>
+          )}
+        </div>
       </section>
 
-      <section style={{ marginTop: 24 }}>
-        <h2>À venir</h2>
-        {data.waiting.length === 0 ? (
-          <p>Aucun titre en attente.</p>
-        ) : (
-          <ul style={{ paddingLeft: 0, listStyle: "none" }}>
-            {data.waiting.map((r) => (
-              <li key={r.id} style={{ marginBottom: 6 }}>
-                {r.isNew && <span style={{ color: "green" }}>🆕 </span>}
-                <strong>{r.title}</strong> — {r.artist} ({r.display_name || "?"})
-              </li>
-            ))}
-          </ul>
-        )}
-      </section>
-
-      <section style={{ marginTop: 24 }}>
-        <h2>Déjà passées</h2>
-        {data.played.length === 0 ? (
-          <p>Aucun titre terminé.</p>
-        ) : (
-          <ul style={{ paddingLeft: 0, listStyle: "none" }}>
-            {data.played.map((r) => (
-              <li key={r.id} style={{ marginBottom: 6 }}>
-                <strong>{r.title}</strong> — {r.artist} ({r.display_name || "?"})
-              </li>
-            ))}
-          </ul>
-        )}
-      </section>
+      {/* Responsive : pile en 1 colonne en dessous de 900px */}
+      <style jsx>{`
+        @media (max-width: 900px) {
+          section:nth-of-type(2) {
+            display: block !important;
+          }
+          section:nth-of-type(2) > div + div {
+            margin-top: 16px;
+          }
+        }
+      `}</style>
     </main>
   );
 }

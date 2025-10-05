@@ -1,4 +1,3 @@
-// app/host/[slug]/HostClient.tsx
 "use client";
 import { useEffect, useState } from "react";
 
@@ -48,12 +47,6 @@ export default function HostClient({ slug }: { slug: string }) {
     }
   }
 
-  function copyText(txt: string) {
-    navigator.clipboard.writeText(txt).catch(() => {
-      alert("Impossible de copier le texte.");
-    });
-  }
-
   useEffect(() => {
     refresh();
     const it = setInterval(refresh, 5000);
@@ -74,54 +67,14 @@ export default function HostClient({ slug }: { slug: string }) {
               border: "1px solid #ccc",
               borderRadius: 6,
               background: "#f9f9f9",
-              display: "flex",
-              justifyContent: "space-between",
-              alignItems: "center",
-              gap: 8,
-              flexWrap: "wrap",
             }}
           >
-            <div>
-              ▶ <strong>{data.playing.title}</strong> — {data.playing.artist}{" "}
-              ({data.playing.display_name || "?"})
-            </div>
-            <div style={{ display: "flex", gap: 6 }}>
-              <button
-                onClick={() =>
-                  copyText(`${data.playing!.title} — ${data.playing!.artist}`)
-                }
-                title="Copier Titre + Artiste"
-                style={{
-                  padding: "4px 6px",
-                  border: "1px solid #ccc",
-                  borderRadius: 4,
-                  cursor: "pointer",
-                  background: "#fafafa",
-                }}
-              >
-                🎵
-              </button>
-              {data.playing.display_name && (
-                <button
-                  onClick={() => copyText(data.playing!.display_name || "")}
-                  title="Copier Nom du chanteur"
-                  style={{
-                    padding: "4px 6px",
-                    border: "1px solid #ccc",
-                    borderRadius: 4,
-                    cursor: "pointer",
-                    background: "#fafafa",
-                  }}
-                >
-                  👤
-                </button>
-              )}
-            </div>
+            ▶ <strong>{data.playing.title}</strong> — {data.playing.artist}{" "}
+            ({data.playing.display_name || "?"})
           </div>
         ) : (
           <p>Aucune chanson en cours.</p>
         )}
-
         <button
           onClick={playNext}
           disabled={loading}
@@ -143,56 +96,11 @@ export default function HostClient({ slug }: { slug: string }) {
           <p>Aucun titre en attente.</p>
         ) : (
           <ul style={{ listStyle: "none", paddingLeft: 0 }}>
-            {data.waiting.map((r, idx) => (
-              <li
-                key={r.id}
-                style={{
-                  marginBottom: 6,
-                  display: "flex",
-                  justifyContent: "space-between",
-                  alignItems: "center",
-                  gap: 8,
-                }}
-              >
-                <div>
-                  {r.isNew && <span style={{ color: "green" }}>🆕 </span>}
-                  <strong>{r.title}</strong> — {r.artist} (
-                  {r.display_name || "?"})
-                </div>
-
-                {/* Boutons copier pour les deux premiers de la file */}
-                {idx < 2 && (
-                  <div style={{ display: "flex", gap: 6 }}>
-                    <button
-                      onClick={() => copyText(`${r.title} — ${r.artist}`)}
-                      title="Copier Titre + Artiste"
-                      style={{
-                        padding: "4px 6px",
-                        border: "1px solid #ccc",
-                        borderRadius: 4,
-                        cursor: "pointer",
-                        background: "#fafafa",
-                      }}
-                    >
-                      🎵
-                    </button>
-                    {r.display_name && (
-                      <button
-                        onClick={() => copyText(r.display_name || "")}
-                        title="Copier Nom du chanteur"
-                        style={{
-                          padding: "4px 6px",
-                          border: "1px solid #ccc",
-                          borderRadius: 4,
-                          cursor: "pointer",
-                          background: "#fafafa",
-                        }}
-                      >
-                        👤
-                      </button>
-                    )}
-                  </div>
-                )}
+            {data.waiting.map((r) => (
+              <li key={r.id} style={{ marginBottom: 6 }}>
+                {r.isNew && <span style={{ color: "green" }}>🆕 </span>}
+                <strong>{r.title}</strong> — {r.artist}{" "}
+                ({r.display_name || "?"})
               </li>
             ))}
           </ul>
@@ -208,8 +116,8 @@ export default function HostClient({ slug }: { slug: string }) {
           <ul style={{ listStyle: "none", paddingLeft: 0 }}>
             {data.played.map((r) => (
               <li key={r.id} style={{ marginBottom: 6 }}>
-                <strong>{r.title}</strong> — {r.artist} (
-                {r.display_name || "?"})
+                <strong>{r.title}</strong> — {r.artist}{" "}
+                ({r.display_name || "?"})
               </li>
             ))}
           </ul>

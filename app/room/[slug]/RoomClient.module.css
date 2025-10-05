@@ -4,7 +4,57 @@
 */
 
 /* Bouton style affiche (néon rose/bleu) */
-.neonButton {
+.neonButton {/* === RoomClient.module.css — neutralize visuals === */
+
+.wrapper{ max-width:720px; margin:24px auto; padding:0 16px; }
+
+.title{
+  font-weight: 800;
+  letter-spacing: -0.01em;
+  margin: 0 0 12px 0;
+  font-size: clamp(22px, 3.5vw, 28px);
+}
+
+/* Small info block over queue stats */
+.info{ margin: 8px 0 16px; padding: 8px 12px; background: #f9fafb; border: 1px solid #e5e7eb; border-radius: 10px; }
+
+/* Autocomplete list */
+.suggest{
+  border:1px solid #e5e7eb;
+  border-radius: 8px;
+  max-height: 220px;
+  overflow-y:auto;
+  margin: 0 0 12px;
+  padding: 6px;
+}
+.suggestItem{
+  padding: 6px 6px;
+  border-bottom: 1px solid #f1f5f9;
+  cursor: pointer;
+}
+.suggestItem:last-child{ border-bottom:0 }
+.suggestItem:hover{ background:#f8fafc }
+
+/* Buttons */
+.neonButton{ /* reused name to avoid touching TSX — but neutral look */
+  display:inline-flex; align-items:center; justify-content:center;
+  padding:10px 16px; border-radius:999px;
+  border:1px solid #e5e7eb; background:#f9fafb; color:#111; cursor:pointer;
+  transition: background .15s ease, transform .08s ease;
+}
+.neonButton:hover{ background:#f3f4f6 }
+.neonButton:active{ transform: translateY(1px) }
+.neonButton[disabled]{ opacity:.6; cursor:not-allowed }
+
+/* Lottery overlay winner */
+.winner{
+  position:fixed; inset:0; background:#111; color:#fff;
+  display:flex; align-items:center; justify-content:center; flex-direction:column;
+  z-index: 9999; text-align:center; padding:20px;
+}
+.winnerTitle{ font-size:28px; margin-bottom:8px }
+.winnerSub{ font-size:18px; opacity:.9 }
+.winnerNote{ margin-top:16px; font-size:14px; opacity:.8 }
   position: relative;
   display: inline-block;
   border: none;

@@ -1,4 +1,100 @@
-:root {
+/* === Minimal neutral reset + theme (FairKaraoké) === */
+:root{
+  --bg: #ffffff;
+  --fg: #111111;
+  --muted: #6b7280;
+  --border: #e5e7eb;
+  --accent: #111111;
+  --radius: 10px;
+  --gap: 14px;
+}
+
+*{box-sizing:border-box}
+html,body{height:100%}
+body{
+  margin:0;
+  font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Inter, Arial, Noto Sans, "Apple Color Emoji","Segoe UI Emoji";
+  background: var(--bg);
+  color: var(--fg);
+  line-height:1.5;
+}
+
+/* Layout helpers */
+.container{
+  max-width: 720px;
+  margin: 24px auto;
+  padding: 0 16px;
+}
+
+/* Headings (no neon, no shadow) */
+h1,h2,h3{margin:0 0 12px 0; font-weight:700; letter-spacing:-0.01em}
+h1{font-size: clamp(22px, 3.5vw, 28px)}
+h2{font-size: clamp(18px, 3vw, 22px)}
+
+/* Cards / panels (neutral) */
+.card{
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 12px;
+  background: #fff;
+}
+
+/* Forms */
+label{display:block; margin: 8px 0 6px; font-weight:600}
+input,button,textarea,select{
+  font: inherit;
+}
+input, textarea, select{
+  width: 100%;
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: #fff;
+  outline: none;
+}
+input:focus, textarea:focus, select:focus{
+  border-color:#d1d5db;
+  box-shadow: none;
+}
+
+/* Buttons (default) */
+button, .btn{
+  display:inline-flex; align-items:center; justify-content:center;
+  gap:8px;
+  padding: 10px 16px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: #f9fafb;
+  color: var(--fg);
+  cursor: pointer;
+  transition: transform .08s ease, background .15s ease, border-color .15s ease, opacity .15s ease;
+}
+button:hover, .btn:hover{ background:#f3f4f6; border-color:#e5e7eb }
+button:active, .btn:active{ transform: translateY(1px) }
+button[disabled], .btn[aria-disabled="true"]{ opacity:.6; cursor:not-allowed }
+
+/* Utility */
+.muted{ color: var(--muted) }
+.hr{ height:1px; background:var(--border); border:0; margin: 18px 0 }
+
+/* Remove any project-older neon leftovers */
+.neonButton,
+.neonTitle,
+.cardNeon,
+.panelNeon{
+  all: unset;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 10px 16px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: #f9fafb;
+  color: var(--fg);
+  cursor: pointer;
+}
+.neonButton:focus-visible{ outline: 2px solid #d1d5db; outline-offset:2px }:root {
   --bg-color: #0b0b2a;
   --text-color: #ffffff;
   --accent-color: #ff3efc;

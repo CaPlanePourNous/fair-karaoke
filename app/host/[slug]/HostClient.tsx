@@ -27,8 +27,9 @@ export default function HostClient({ slug }: { slug: string }) {
   // ---- Rafraîchissement principal ----
   async function refresh() {
     try {
-      const r = await fetch("/api/host/queue");
-      const d = await r.json();
+      const r = await fetch("/api/host/queue", { cache: "no-store" });
+      if (!r.ok) throw new Error("HTTP " + r.status);
+      const d = (await r.json()) as QueueData;
       setData(d);
     } catch (e) {
       console.error("Erreur refresh():", e);
@@ -40,7 +41,7 @@ export default function HostClient({ slug }: { slug: string }) {
     if (loading) return;
     setLoading(true);
 
-    // Mise à jour locale immédiate pour retour visuel
+    // Mise à jour locale optimiste pour retour visuel immédiat
     setData((prev) => {
       const next = prev.waiting[0];
       if (!next) return prev;
@@ -53,26 +54,33 @@ export default function HostClient({ slug }: { slug: string }) {
     });
 
     try {
-      const r = await fetch("/api/host/play", {
+      // 1) tentative "canonique" : POST /api/host/next
+      let resp = await fetch("/api/host/next", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ next: true, slug }),
       });
 
-      const text = await r.text();
-      console.log("[/api/host/play] status:", r.status);
-      console.log("[/api/host/play] body:", text);
+      // 2) fallback si non dispo / non 2xx : POST /api/host/play { next:true, slug }
+      if (!resp.ok) {
+        const body1 = await resp.text();
+        console.log("[/api/host/next] status:", resp.status, "body:", body1);
 
-      if (!r.ok) {
-        let msg = "Erreur /api/host/play";
-        try {
-          const j = JSON.parse(text);
-          msg = j?.error || msg;
-        } catch {}
-        alert(msg);
+        resp = await fetch("/api/host/play", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ next: true, slug }),
+        });
+
+        const body2 = await resp.text();
+        console.log("[/api/host/play] status:", resp.status, "body:", body2);
+
+        if (!resp.ok) {
+          // si les deux échouent, avertir et recoller à l’état réel serveur
+          alert("Impossible de lancer la suivante.");
+        }
       }
 
-      // resynchronisation serveur
+      // resynchronisation serveur (si l’API a fait plus/moins que prévu)
       await refresh();
     } catch (err) {
       console.error("playNext() network error:", err);

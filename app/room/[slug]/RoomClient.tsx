@@ -1,0 +1,273 @@
+'use client';
+
+import { useState, useEffect } from 'react';
+import { createClient } from '@supabase/supabase-js';
+
+type Suggestion = {
+  title: string;
+  artist: string;
+  karafun_id?: string;
+  url?: string;
+};
+
+// Supabase côté client
+const supa = createClient(
+  process.env.NEXT_PUBLIC_SUPABASE_URL!,
+  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+);
+
+function saveEntryId(id: string) {
+  try { localStorage.setItem('lottery_entry_id', id); } catch {}
+}
+function loadEntryId() {
+  try { return localStorage.getItem('lottery_entry_id'); } catch { return null; }
+}
+
+export default function RoomClient({ slug }: { slug: string }) {
+  const [displayName, setDisplayName] = useState('');
+  const [title, setTitle] = useState('');
+  const [artist, setArtist] = useState('');
+  const [kid, setKid] = useState<Suggestion | null>(null);
+  const [msg, setMsg] = useState<string | null>(null);
+  const [won, setWon] = useState(false);
+
+  // ------ Stats d’attente ------
+  const [stats, setStats] = useState<{ total_waiting: number; est_minutes: number } | null>(null);
+  useEffect(() => {
+    async function load() {
+      const r = await fetch('/api/stats');
+      const s = await r.json();
+      setStats({ total_waiting: s.total_waiting, est_minutes: s.est_minutes });
+    }
+    load();
+    const it = setInterval(load, 10000);
+    return () => clearInterval(it);
+  }, []);
+  const limitReached =
+    (stats?.total_waiting ?? 0) >= 15 || (stats?.est_minutes ?? 0) > 45;
+
+  // ------ Auto-complétion catalogue ------
+  const [q, setQ] = useState('');
+  const [list, setList] = useState<Suggestion[]>([]);
+  useEffect(() => {
+    const t = setTimeout(async () => {
+      const qq = q.trim();
+      if (qq.length < 2) { setList([]); return; }
+      const r = await fetch('/api/search?q=' + encodeURIComponent(qq));
+      const data = await r.json();
+      setList(Array.isArray(data) ? data : []);
+    }, 250);
+    return () => clearTimeout(t);
+  }, [q]);
+
+  function pick(s: Suggestion) {
+    setTitle(s.title);
+    setArtist(s.artist);
+    setKid(s);
+    setQ('');
+    setList([]);
+    setMsg(null);
+  }
+
+  // ------ Son (armement sur mobile) ------
+  const [soundReady, setSoundReady] = useState(false);
+  const [ding, setDing] = useState<HTMLAudioElement | null>(null);
+  function armSound() {
+    const a = new Audio('/ding.mp3');
+    a.load();
+    setDing(a);
+    setSoundReady(true);
+    setMsg('Son activé ✅');
+  }
+
+  // ------ Tirage : écoute Realtime ------
+  useEffect(() => {
+    const entryId = loadEntryId();
+    if (!entryId) return;
+    const ch = supa
+      .channel('lottery-win-' + entryId)
+      .on(
+        'postgres_changes',
+        { event: 'INSERT', schema: 'public', table: 'lottery_winners', filter: `entry_id=eq.${entryId}` },
+        () => {
+          setWon(true);
+          setMsg('🎉 Tu as été tiré au sort !');
+          if (ding) { ding.currentTime = 0; ding.play().catch(() => {}); }
+          if (navigator.vibrate) navigator.vibrate([200, 100, 200]);
+        }
+      )
+      .subscribe();
+    return () => { supa.removeChannel(ch); };
+  }, [ding]);
+
+  // Fallback polling
+  useEffect(() => {
+    const entryId = loadEntryId();
+    if (!entryId) return;
+    const it = setInterval(async () => {
+      const r = await fetch('/api/lottery/has-won?entry_id=' + entryId);
+      const d = await r.json();
+      if (d?.won) {
+        if (!won) {
+          setWon(true);
+          setMsg('🎉 Tu as été tiré au sort !');
+          if (ding) { ding.currentTime = 0; ding.play().catch(() => {}); }
+          if (navigator.vibrate) navigator.vibrate([200, 100, 200]);
+        }
+        clearInterval(it);
+      }
+    }, 8000);
+    return () => clearInterval(it);
+  }, [ding, won]);
+
+  async function submit() {
+    setMsg(null);
+    if (!displayName.trim() || !title.trim() || !artist.trim()) {
+      setMsg('Remplis les 3 champs.');
+      return;
+    }
+    const r = await fetch('/api/requests', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        display_name: displayName.trim(),
+        title: title.trim(),
+        artist: artist.trim(),
+        karafun_id: kid?.karafun_id ?? null
+      })
+    });
+    const data = await r.json();
+    if (!r.ok) { setMsg(`Erreur: ${data.error || 'inconnue'}`); return; }
+    setMsg('Demande envoyée 👍');
+    setTitle(''); setArtist(''); setKid(null);
+  }
+
+  return (
+    <main style={{ maxWidth: 680, margin: '30px auto', padding: '0 16px' }}>
+      <h1>Karaoké — {slug}</h1>
+
+      {stats && (
+        <p style={{
+          margin: '8px 0 16px',
+          padding: '8px 12px',
+          background: '#f6f6f6',
+          borderRadius: 8,
+          color: '#000'   // assure lisible en dark mode
+        }}>
+          En attente : <strong>{stats.total_waiting}</strong> • Estimation ≈ <strong>{stats.est_minutes} min</strong>
+          {limitReached && <span style={{ color: '#b00', marginLeft: 8 }}> (liste pleine)</span>}
+        </p>
+      )}
+
+      <label>Nom ou Surnom</label>
+      <input
+        value={displayName}
+        onChange={e => setDisplayName(e.target.value)}
+        placeholder="Nom ou Surnom"
+        style={{ width: '100%', padding: 8, margin: '6px 0 14px' }}
+      />
+
+      <label>Recherche dans le catalogue KaraFun</label>
+      <input
+        value={q}
+        onChange={e => setQ(e.target.value)}
+        placeholder="Tape un titre ou un artiste"
+        style={{ width: '100%', padding: 8, margin: '6px 0 6px' }}
+      />
+      {list.length > 0 && (
+        <ul style={{ border: '1px solid #ccc', borderRadius: 6, maxHeight: 220, overflowY: 'auto', margin: '0 0 12px', padding: 6 }}>
+          {list.map((s, i) => (
+            <li key={i} onClick={() => pick(s)} style={{ padding: '6px 4px', cursor: 'pointer', borderBottom: '1px solid #eee' }}>
+              <strong>{s.title}</strong> — {s.artist}
+            </li>
+          ))}
+        </ul>
+      )}
+
+      <label>Titre</label>
+      <input
+        value={title}
+        onChange={e => { setTitle(e.target.value); setKid(null); }}
+        placeholder="Ex: L’aventurier"
+        style={{ width: '100%', padding: 8, margin: '6px 0 14px' }}
+      />
+
+      <label>Artiste</label>
+      <input
+        value={artist}
+        onChange={e => { setArtist(e.target.value); setKid(null); }}
+        placeholder="Ex: Indochine"
+        style={{ width: '100%', padding: 8, margin: '6px 0 14px' }}
+      />
+
+      <button onClick={submit} disabled={limitReached} style={{
+        padding: '10px 16px',
+        cursor: limitReached ? 'not-allowed' : 'pointer',
+        opacity: limitReached ? .6 : 1
+      }}>
+        Demander
+      </button>
+
+      {limitReached && (
+        <p style={{ marginTop: 8, color: '#b00' }}>
+          La file dépasse 45 min (~15 titres). Réessaie plus tard.
+        </p>
+      )}
+
+      {msg && <p style={{ marginTop: 12 }}>{msg}</p>}
+
+      {kid?.url && (
+        <p style={{ opacity: .7, marginTop: 8 }}>
+          Astuce : <a href={kid.url} target="_blank">voir la fiche KaraFun</a>
+        </p>
+      )}
+
+      <hr style={{ margin: '24px 0' }} />
+      <h2>🎁 Tirage au sort</h2>
+      <p>Inscris ton nom pour participer (une inscription par personne).</p>
+
+      <button
+        onClick={async () => {
+          if (!displayName.trim()) { setMsg('Renseigne ton nom avant de t’inscrire au tirage.'); return; }
+          const r = await fetch('/api/lottery/register', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ display_name: displayName.trim() })
+          });
+          const d = await r.json();
+          if (!r.ok) setMsg('Erreur tirage : ' + (d.error || 'inconnue'));
+          else {
+            setMsg('Inscription au tirage enregistrée ✅');
+            if (d.id) saveEntryId(d.id);
+          }
+        }}
+        style={{ padding: '8px 14px', cursor: 'pointer' }}
+      >
+        M’inscrire au tirage
+      </button>
+
+      {!soundReady && (
+        <p style={{ marginTop: 8 }}>
+          🔊 Pour être alerté si tu es tiré, active le son :
+          <button onClick={armSound} style={{ marginLeft: 8, padding: '6px 10px' }}>Activer le son</button>
+        </p>
+      )}
+
+      {won && (
+        <div style={{
+          position: 'fixed', inset: 0, background: '#1db954', color: '#fff',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          flexDirection: 'column', zIndex: 9999, textAlign: 'center', padding: '20px'
+        }}>
+          <div style={{ fontSize: 28, marginBottom: 8 }}>🎉 TU AS GAGNÉ ! 🎉</div>
+          <div style={{ fontSize: 20, opacity: .9 }}>
+            {displayName ? displayName : 'Bravo !'}
+          </div>
+          <div style={{ marginTop: 16, fontSize: 14, opacity: .8 }}>
+            Attends que l’animateur te fasse signe 😉
+          </div>
+        </div>
+      )}
+    </main>
+  );
+}

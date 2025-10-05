@@ -1,3 +1,4 @@
+// app/host/[slug]/HostClient.tsx
 "use client";
 import { useEffect, useState } from "react";
 
@@ -29,7 +30,7 @@ export default function HostClient({ slug }: { slug: string }) {
       const d = await r.json();
       setData(d);
     } catch (e) {
-      console.error("Erreur lors du chargement :", e);
+      console.error(e);
     }
   }
 
@@ -47,6 +48,26 @@ export default function HostClient({ slug }: { slug: string }) {
     }
   }
 
+  async function importCatalog() {
+    try {
+      const r = await fetch("/api/catalog/import", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          url: "https://www.karafun.fr/cl/3107312/de746f0516a28e34c9802584192dc6d3/",
+        }),
+      });
+      const d = await r.json();
+      if (!r.ok) {
+        alert("Import raté : " + (d?.error || "inconnu"));
+      } else {
+        alert(`Import OK : ${d.imported} titres`);
+      }
+    } catch (e) {
+      alert("Erreur réseau lors de l’import.");
+    }
+  }
+
   useEffect(() => {
     refresh();
     const it = setInterval(refresh, 5000);
@@ -57,21 +78,29 @@ export default function HostClient({ slug }: { slug: string }) {
     <main style={{ maxWidth: 720, margin: "0 auto", padding: "16px" }}>
       <h1>🎤 File d’attente — {slug}</h1>
 
-      {/* En cours */}
+      {/* Bouton d'import du catalogue */}
+      <button
+        onClick={importCatalog}
+        style={{
+          marginTop: 12,
+          padding: "8px 14px",
+          cursor: "pointer",
+          background: "#eee",
+          border: "1px solid #ccc",
+          borderRadius: 6,
+        }}
+      >
+        📥 Mettre à jour le catalogue
+      </button>
+
       <section style={{ marginTop: 24 }}>
         <h2>En cours</h2>
-        {data.playing ? (
-          <div
-            style={{
-              padding: "8px 12px",
-              border: "1px solid #ccc",
-              borderRadius: 6,
-              background: "#f9f9f9",
-            }}
-          >
-            ▶ <strong>{data.playing.title}</strong> — {data.playing.artist}{" "}
+        {data?.playing ? (
+          <p>
+            <span aria-hidden>▶</span>{" "}
+            <strong>{data.playing.title}</strong> — {data.playing.artist}{" "}
             ({data.playing.display_name || "?"})
-          </div>
+          </p>
         ) : (
           <p>Aucune chanson en cours.</p>
         )}
@@ -89,35 +118,31 @@ export default function HostClient({ slug }: { slug: string }) {
         </button>
       </section>
 
-      {/* À venir */}
       <section style={{ marginTop: 24 }}>
         <h2>À venir</h2>
         {data.waiting.length === 0 ? (
           <p>Aucun titre en attente.</p>
         ) : (
-          <ul style={{ listStyle: "none", paddingLeft: 0 }}>
+          <ul style={{ paddingLeft: 0, listStyle: "none" }}>
             {data.waiting.map((r) => (
               <li key={r.id} style={{ marginBottom: 6 }}>
                 {r.isNew && <span style={{ color: "green" }}>🆕 </span>}
-                <strong>{r.title}</strong> — {r.artist}{" "}
-                ({r.display_name || "?"})
+                <strong>{r.title}</strong> — {r.artist} ({r.display_name || "?"})
               </li>
             ))}
           </ul>
         )}
       </section>
 
-      {/* Déjà passées */}
       <section style={{ marginTop: 24 }}>
         <h2>Déjà passées</h2>
         {data.played.length === 0 ? (
           <p>Aucun titre terminé.</p>
         ) : (
-          <ul style={{ listStyle: "none", paddingLeft: 0 }}>
+          <ul style={{ paddingLeft: 0, listStyle: "none" }}>
             {data.played.map((r) => (
               <li key={r.id} style={{ marginBottom: 6 }}>
-                <strong>{r.title}</strong> — {r.artist}{" "}
-                ({r.display_name || "?"})
+                <strong>{r.title}</strong> — {r.artist} ({r.display_name || "?"})
               </li>
             ))}
           </ul>

@@ -1,53 +1,55 @@
-// app/api/host/queue/route.ts
 import { NextResponse } from "next/server";
-import { sbServer } from "@/lib/supabaseServer";
-import { prepareQueue } from "@/lib/ordering";
+import { createClient } from "@supabase/supabase-js";
+import { computeOrdering, type RequestRow } from "@/lib/ordering";
 
+export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-export async function GET() {
-  try {
-    // Récupère les chansons en cours
-    const { data: playingData, error: errPlaying } = await sbServer
-      .from("requests")
-      .select("*")
-      .eq("status", "playing")
-      .order("played_at", { ascending: false })
-      .limit(1);
-
-    if (errPlaying) throw errPlaying;
-    const playing = playingData?.[0] || null;
-
-    // Récupère les chansons terminées
-    const { data: playedData, error: errPlayed } = await sbServer
-      .from("requests")
-      .select("*")
-      .eq("status", "done")
-      .order("played_at", { ascending: false })
-      .limit(30);
-
-    if (errPlayed) throw errPlayed;
-
-    // Récupère les chansons en attente
-    const { data: waitingData, error: errWaiting } = await sbServer
-      .from("requests")
-      .select("*")
-      .in("status", ["pending"]);
-
-    if (errWaiting) throw errWaiting;
-
-    // Ordonne la file d’attente selon les règles
-    const waiting = prepareQueue(waitingData || [], playedData || [], playing);
-
-    return NextResponse.json({
-      playing,
-      waiting,
-      played: playedData || [],
-    });
- } catch (e: unknown) {
-  console.error("Erreur /api/host/queue :", e);
-  const msg = e instanceof Error ? e.message : String(e);
-  return NextResponse.json({ error: msg }, { status: 500 });
+function getSupabase() {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY ?? process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
+  return createClient(url, key, { auth: { persistSession: false } });
 }
 
+export async function GET() {
+  const db = getSupabase();
+  try {
+    const { data, error } = await db
+      .from("requests")
+      .select("id,singer,title,artist,status,created_at")
+      .in("status", ["waiting", "playing", "done"])
+      .order("created_at", { ascending: true });
+    if (error) throw error;
+
+    const reqs = (data ?? []) as RequestRow[];
+    const playing = reqs.find(r => r.status === "playing") || null;
+    const done = reqs.filter(r => r.status === "done");
+
+    const ord = computeOrdering({
+      requests: reqs,
+      alreadyPlayed: done.map(d => ({ title: d.title, artist: d.artist })),
+      maxQueue: 15,
+    });
+
+    // La "file" côté UI = orderedWaiting (dans l’ordre), point.
+    const waitingOrdered = ord.orderedWaiting
+      .map(id => reqs.find(r => r.id === id))
+      .filter(Boolean) as RequestRow[];
+
+    // Optionnel : renvoyer un petit historique done (ex: 10 derniers)
+    const recentDone = done
+      .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+      .slice(0, 20);
+
+    return NextResponse.json({
+      ok: true,
+      playing,
+      waiting: waitingOrdered,
+      done: recentDone,
+    });
+  } catch (e: unknown) {
+    console.error("Erreur /api/host/queue :", e);
+    const msg = e instanceof Error ? e.message : String(e);
+    return NextResponse.json({ error: msg }, { status: 500 });
+  }
 }

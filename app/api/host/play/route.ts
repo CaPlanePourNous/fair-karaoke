@@ -51,8 +51,11 @@ export async function POST() {
     }
 
     return NextResponse.json({ ok: true });
-  } catch (e) {
-    console.error("Erreur /api/host/play :", e);
-    return NextResponse.json({ error: e.message }, { status: 500 });
-  }
+  // Remplace ton catch par ceci :
+} catch (e: unknown) {
+  console.error("Erreur /api/host/play :", e);
+  const msg = e instanceof Error ? e.message : String(e);
+  return NextResponse.json({ error: msg }, { status: 500 });
+}
+
 }

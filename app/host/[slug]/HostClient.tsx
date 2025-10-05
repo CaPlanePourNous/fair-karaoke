@@ -6,7 +6,7 @@ type Item = {
   id?: string | number;
   title: string;
   artist: string;
-  display_name?: string; // nom/surnom de la personne
+  display_name?: string; // nom/pseudo du chanteur
 };
 
 type HostQueuePayload = {
@@ -24,12 +24,11 @@ export default function HostClient({ slug }: { slug: string }) {
     played: [],
   });
   const [error, setError] = useState<string | null>(null);
-  const [refreshing, setRefreshing] = useState(false);
+  const [busy, setBusy] = useState(false); // pour le bouton "Lire la suivante"
 
-  // --- Fetch queue periodically ---
+  // --- Charge la queue périodiquement (en arrière-plan) ---
   const fetchQueue = async () => {
     try {
-      setRefreshing(true);
       const r = await fetch("/api/host/queue", { cache: "no-store" });
       if (!r.ok) throw new Error("HTTP " + r.status);
       const d = (await r.json()) as HostQueuePayload;
@@ -41,8 +40,6 @@ export default function HostClient({ slug }: { slug: string }) {
       setError(null);
     } catch (e: any) {
       setError("Impossible de charger la file");
-    } finally {
-      setRefreshing(false);
     }
   };
 
@@ -52,12 +49,11 @@ export default function HostClient({ slug }: { slug: string }) {
     return () => clearInterval(it);
   }, []);
 
-  // --- Helpers ---
+  // --- Helpers de copie ---
   const copy = async (txt: string) => {
     try {
       await navigator.clipboard.writeText(txt);
     } catch {
-      // fallback textarea
       const ta = document.createElement("textarea");
       ta.value = txt;
       ta.style.position = "fixed";
@@ -74,7 +70,33 @@ export default function HostClient({ slug }: { slug: string }) {
 
   const waitingFirstTwo = useMemo(() => (data.waiting ?? []).slice(0, 2), [data.waiting]);
 
-  // --- UI styles (sobres) ---
+  // --- Action: Lire la suivante ---
+  const handleNext = async () => {
+    if (busy) return;
+    setBusy(true);
+    try {
+      // Ta route /api/host/play gère { next: true } :
+      // - marque le "playing" actuel en done
+      // - passe la 1ère "waiting" en playing
+      const r = await fetch("/api/host/play", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ next: true }),
+      });
+      if (!r.ok) {
+        const d = await r.json().catch(() => ({}));
+        throw new Error(d?.error || "Échec de l’action");
+      }
+      // Recharge l’état immédiatement après l’action
+      await fetchQueue();
+    } catch (e: any) {
+      setError(e?.message || "Impossible de passer à la suivante");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  // --- Styles sobres ---
   const card: React.CSSProperties = {
     border: "1px solid #e6e6e6",
     borderRadius: 10,
@@ -91,6 +113,13 @@ export default function HostClient({ slug }: { slug: string }) {
     background: "#f7f7f7",
     cursor: "pointer",
   };
+  const btnPrimary: React.CSSProperties = {
+    ...btn,
+    background: "#efefef",
+    fontWeight: 600,
+  };
+
+  const canNext = (data.playing || (data.waiting && data.waiting.length > 0));
 
   return (
     <main style={{ maxWidth: 1100, margin: "0 auto", padding: 16 }}>
@@ -101,14 +130,8 @@ export default function HostClient({ slug }: { slug: string }) {
       )}
 
       {/* Zone 1 : En cours */}
-      <section style={{ ...card, marginTop: 12, marginBottom: 16 }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
-          <h2 style={{ margin: 0 }}>En cours</h2>
-          <button onClick={fetchQueue} style={btn} disabled={refreshing} aria-busy={refreshing}>
-            {refreshing ? "Rafraîchissement..." : "Rafraîchir"}
-          </button>
-        </div>
-
+      <section style={{ ...card, marginTop: 12 }}>
+        <h2 style={{ margin: 0 }}>En cours</h2>
         {data.playing ? (
           <div style={{ marginTop: 8 }}>
             <div style={{ fontSize: 20, fontWeight: 700 }}>
@@ -130,6 +153,19 @@ export default function HostClient({ slug }: { slug: string }) {
           <p style={{ marginTop: 8, opacity: 0.8 }}>Aucune lecture en cours.</p>
         )}
       </section>
+
+      {/* Zone bouton central : Lire la suivante */}
+      <div style={{ display: "flex", justifyContent: "center", margin: "14px 0" }}>
+        <button
+          style={btnPrimary}
+          onClick={handleNext}
+          disabled={!canNext || busy}
+          aria-busy={busy}
+          title="Marque la chanson en cours comme terminée et lance la suivante"
+        >
+          {"▶"} Lire la suivante
+        </button>
+      </div>
 
       {/* Zone 2 : grille 2 colonnes (Attente / Passées) */}
       <section
@@ -223,10 +259,10 @@ export default function HostClient({ slug }: { slug: string }) {
       {/* Responsive : pile en 1 colonne en dessous de 900px */}
       <style jsx>{`
         @media (max-width: 900px) {
-          section:nth-of-type(2) {
+          section:nth-of-type(3) {
             display: block !important;
           }
-          section:nth-of-type(2) > div + div {
+          section:nth-of-type(3) > div + div {
             margin-top: 16px;
           }
         }

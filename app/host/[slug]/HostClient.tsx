@@ -1,6 +1,6 @@
 // app/host/[slug]/HostClient.tsx
 "use client";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 
 type Req = {
   id: string;
@@ -24,199 +24,148 @@ export default function HostClient({ slug }: { slug: string }) {
   });
   const [loading, setLoading] = useState(false);
 
-  // Anti-course entre l’action et le polling
-  const pausePollingUntil = useRef<number>(0);
-
-  // ---- Rafraîchissement principal (avec pause temporaire) ----
-  async function refresh(label: string = "refresh") {
-    // Ne pas poller si on est dans la fenêtre de pause
-    if (Date.now() < pausePollingUntil.current) {
-      // console.debug(`[${label}] polling paused`);
-      return;
-    }
+  async function refresh() {
     try {
-      const url = "/api/host/queue";
-      // Logs côté client
-      console.log(`[${label}] GET ${url}`);
-      const r = await fetch(url, { cache: "no-store" });
-      const text = await r.text();
-      console.log(`[${label}] GET ${url} -> status:`, r.status);
-      // Essayons de parser JSON, sinon on logue le texte
-      try {
-        const d = JSON.parse(text) as QueueData;
-        setData(d);
-        // Debug lisible
-        console.log(`[${label}] queue:`, {
-          playing: d?.playing?.id ? `${d.playing.title} — ${d.playing.artist}` : null,
-          waiting: d?.waiting?.length,
-          played: d?.played?.length,
-        });
-      } catch (e) {
-        console.warn(`[${label}] Non-JSON response from /api/host/queue:`, text);
-      }
+      const r = await fetch("/api/host/queue");
+      const d = await r.json();
+      setData(d);
     } catch (e) {
-      console.error(`[${label}] /api/host/queue error:`, e);
+      console.error("Erreur lors du chargement :", e);
     }
   }
 
-  // ---- Copier texte ----
-  function copyText(txt: string) {
-    navigator.clipboard
-      .writeText(txt)
-      .catch(() => alert("Impossible de copier le texte."));
-  }
-
-  // ---- Passer à la suivante (avec logging + anti-polling) ----
   async function playNext() {
-    if (loading) return;
     setLoading(true);
-
-    // Pause le polling 2 secondes pour éviter l’effet “passe 1s puis revient”
-    pausePollingUntil.current = Date.now() + 2000;
-
     try {
-      // 1) Essai canonique : /api/host/next
-      const url1 = "/api/host/next";
-      console.log(`[playNext] POST ${url1}`);
-      let resp = await fetch(url1, {
+      await fetch("/api/host/play", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ next: true }),
       });
-      let body1 = await resp.text();
-      console.log(`[playNext] ${url1} -> status:`, resp.status);
-      console.log(`[playNext] ${url1} -> body:`, body1);
-
-      // 2) Fallback si /next échoue
-      if (!resp.ok) {
-        const url2 = "/api/host/play";
-        const payload = { next: true, slug };
-        console.log(`[playNext] FALLBACK POST ${url2}`, payload);
-        resp = await fetch(url2, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(payload),
-        });
-        const body2 = await resp.text();
-        console.log(`[playNext] ${url2} -> status:`, resp.status);
-        console.log(`[playNext] ${url2} -> body:`, body2);
-
-        if (!resp.ok) {
-          alert("Impossible de lancer la suivante (next/play en échec). Voir console.");
-        }
-      }
-
-      // 3) On force un refresh serveur après l’action
-      await refresh("after-playNext");
-
-    } catch (err) {
-      console.error("[playNext] network/API error:", err);
-      alert("Erreur réseau ou API indisponible.");
-      await refresh("after-error");
+      await refresh();
     } finally {
       setLoading(false);
-      // On prolonge un peu la pause pour laisser passer un éventuel trigger DB
-      pausePollingUntil.current = Date.now() + 1000;
-      // Et on re-poll explicitement une fois juste après
-      setTimeout(() => refresh("post-timeout"), 1200);
     }
   }
 
-  // ---- Polling auto (toutes les 5s) ----
+  function copyText(txt: string) {
+    navigator.clipboard.writeText(txt).catch(() => {
+      alert("Impossible de copier le texte.");
+    });
+  }
+
   useEffect(() => {
-    refresh("on-mount");
-    const it = setInterval(() => refresh("interval"), 5000);
+    refresh();
+    const it = setInterval(refresh, 5000);
     return () => clearInterval(it);
   }, []);
 
   return (
-    <main
-      style={{
-        maxWidth: 1200,
-        margin: "0 auto",
-        padding: "16px",
-        display: "grid",
-        gridTemplateColumns: "1fr 1fr",
-        gridTemplateRows: "auto 1fr",
-        gap: "16px",
-      }}
-    >
-      {/* === En cours === */}
-      <section
-        style={{
-          gridColumn: "1 / span 2",
-          background: "#f9f9f9",
-          padding: "16px",
-          borderRadius: 8,
-          border: "1px solid #ddd",
-        }}
-      >
-        <h2 style={{ marginBottom: 12 }}>🎤 En cours</h2>
-        {data?.playing ? (
-          <p style={{ fontSize: "1.2em", marginBottom: 12 }}>
-            ▶ <strong>{data.playing.title}</strong> — {data.playing.artist}{" "}
-            ({data.playing.display_name || "?"})
-          </p>
+    <main style={{ maxWidth: 720, margin: "0 auto", padding: "16px" }}>
+      <h1>🎤 File d’attente — {slug}</h1>
+
+      {/* En cours */}
+      <section style={{ marginTop: 24 }}>
+        <h2>En cours</h2>
+        {data.playing ? (
+          <div
+            style={{
+              padding: "8px 12px",
+              border: "1px solid #ccc",
+              borderRadius: 6,
+              background: "#f9f9f9",
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "center",
+              gap: 8,
+              flexWrap: "wrap",
+            }}
+          >
+            <div>
+              ▶ <strong>{data.playing.title}</strong> — {data.playing.artist}{" "}
+              ({data.playing.display_name || "?"})
+            </div>
+            <div style={{ display: "flex", gap: 6 }}>
+              <button
+                onClick={() =>
+                  copyText(`${data.playing!.title} — ${data.playing!.artist}`)
+                }
+                title="Copier Titre + Artiste"
+                style={{
+                  padding: "4px 6px",
+                  border: "1px solid #ccc",
+                  borderRadius: 4,
+                  cursor: "pointer",
+                  background: "#fafafa",
+                }}
+              >
+                🎵
+              </button>
+              {data.playing.display_name && (
+                <button
+                  onClick={() => copyText(data.playing!.display_name || "")}
+                  title="Copier Nom du chanteur"
+                  style={{
+                    padding: "4px 6px",
+                    border: "1px solid #ccc",
+                    borderRadius: 4,
+                    cursor: "pointer",
+                    background: "#fafafa",
+                  }}
+                >
+                  👤
+                </button>
+              )}
+            </div>
+          </div>
         ) : (
-          <p>Aucun titre en cours.</p>
+          <p>Aucune chanson en cours.</p>
         )}
 
         <button
           onClick={playNext}
+          disabled={loading}
           style={{
             padding: "8px 12px",
             marginTop: 8,
             cursor: loading ? "wait" : "pointer",
-            background: "#f0f0f0",
-            border: "1px solid #ccc",
-            borderRadius: 6,
             opacity: loading ? 0.7 : 1,
           }}
-          title="Marque la chanson en cours comme terminée et lance la suivante"
         >
-          {loading ? "⏳ ..." : "⏭ Lire la suivante"}
+          ⏭ Passer à la suivante
         </button>
       </section>
 
-      {/* === À venir === */}
-      <section
-        style={{
-          background: "#f6f6f6",
-          padding: "16px",
-          borderRadius: 8,
-          border: "1px solid #ddd",
-        }}
-      >
-        <h2>📋 File d’attente</h2>
+      {/* À venir */}
+      <section style={{ marginTop: 24 }}>
+        <h2>À venir</h2>
         {data.waiting.length === 0 ? (
           <p>Aucun titre en attente.</p>
         ) : (
-          <ul style={{ paddingLeft: 0, listStyle: "none" }}>
+          <ul style={{ listStyle: "none", paddingLeft: 0 }}>
             {data.waiting.map((r, idx) => (
               <li
                 key={r.id}
                 style={{
-                  marginBottom: 8,
-                  background: "#fff",
-                  border: "1px solid #ccc",
-                  borderRadius: 6,
-                  padding: "6px 8px",
+                  marginBottom: 6,
                   display: "flex",
                   justifyContent: "space-between",
                   alignItems: "center",
+                  gap: 8,
                 }}
               >
                 <div>
-                  <strong>{r.title}</strong> — {r.artist}{" "}
-                  <span style={{ opacity: 0.7 }}>
-                    ({r.display_name || "?"})
-                  </span>
+                  {r.isNew && <span style={{ color: "green" }}>🆕 </span>}
+                  <strong>{r.title}</strong> — {r.artist} (
+                  {r.display_name || "?"})
                 </div>
-                {/* boutons de copie pour les 2 premiers en file */}
+
+                {/* Boutons copier pour les deux premiers de la file */}
                 {idx < 2 && (
                   <div style={{ display: "flex", gap: 6 }}>
                     <button
                       onClick={() => copyText(`${r.title} — ${r.artist}`)}
-                      title="Copier le titre + artiste"
+                      title="Copier Titre + Artiste"
                       style={{
                         padding: "4px 6px",
                         border: "1px solid #ccc",
@@ -227,19 +176,21 @@ export default function HostClient({ slug }: { slug: string }) {
                     >
                       🎵
                     </button>
-                    <button
-                      onClick={() => copyText(r.display_name || "")}
-                      title="Copier le nom du chanteur"
-                      style={{
-                        padding: "4px 6px",
-                        border: "1px solid #ccc",
-                        borderRadius: 4,
-                        cursor: "pointer",
-                        background: "#fafafa",
-                      }}
-                    >
-                      👤
-                    </button>
+                    {r.display_name && (
+                      <button
+                        onClick={() => copyText(r.display_name || "")}
+                        title="Copier Nom du chanteur"
+                        style={{
+                          padding: "4px 6px",
+                          border: "1px solid #ccc",
+                          borderRadius: 4,
+                          cursor: "pointer",
+                          background: "#fafafa",
+                        }}
+                      >
+                        👤
+                      </button>
+                    )}
                   </div>
                 )}
               </li>
@@ -248,35 +199,17 @@ export default function HostClient({ slug }: { slug: string }) {
         )}
       </section>
 
-      {/* === Déjà passées === */}
-      <section
-        style={{
-          background: "#f6f6f6",
-          padding: "16px",
-          borderRadius: 8,
-          border: "1px solid #ddd",
-        }}
-      >
-        <h2>✅ Déjà passées</h2>
+      {/* Déjà passées */}
+      <section style={{ marginTop: 24 }}>
+        <h2>Déjà passées</h2>
         {data.played.length === 0 ? (
           <p>Aucun titre terminé.</p>
         ) : (
-          <ul style={{ paddingLeft: 0, listStyle: "none" }}>
+          <ul style={{ listStyle: "none", paddingLeft: 0 }}>
             {data.played.map((r) => (
-              <li
-                key={r.id}
-                style={{
-                  marginBottom: 8,
-                  background: "#fff",
-                  border: "1px solid #ccc",
-                  borderRadius: 6,
-                  padding: "6px 8px",
-                }}
-              >
-                <strong>{r.title}</strong> — {r.artist}{" "}
-                <span style={{ opacity: 0.7 }}>
-                  ({r.display_name || "?"})
-                </span>
+              <li key={r.id} style={{ marginBottom: 6 }}>
+                <strong>{r.title}</strong> — {r.artist} (
+                {r.display_name || "?"})
               </li>
             ))}
           </ul>

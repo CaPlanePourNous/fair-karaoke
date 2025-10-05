@@ -24,6 +24,7 @@ export default function HostClient({ slug }: { slug: string }) {
   });
   const [loading, setLoading] = useState(false);
 
+  // ---- Chargement file d'attente ----
   async function refresh() {
     try {
       const r = await fetch("/api/host/queue");
@@ -34,40 +35,36 @@ export default function HostClient({ slug }: { slug: string }) {
     }
   }
 
+  // ---- Passer à la suivante ----
   async function playNext() {
+    if (loading) return;
     setLoading(true);
     try {
-      await fetch("/api/host/play", {
+      const r = await fetch("/api/host/play", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ next: true }),
       });
+      if (!r.ok) {
+        const d = await r.json().catch(() => ({}));
+        throw new Error(d?.error || "Erreur /api/host/play");
+      }
       await refresh();
+    } catch (err) {
+      console.error(err);
     } finally {
       setLoading(false);
     }
   }
 
-  async function importCatalog() {
-    try {
-      const r = await fetch("/api/catalog/import", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          url: "https://www.karafun.fr/cl/3107312/de746f0516a28e34c9802584192dc6d3/",
-        }),
-      });
-      const d = await r.json();
-      if (!r.ok) {
-        alert("Import raté : " + (d?.error || "inconnu"));
-      } else {
-        alert(`Import OK : ${d.imported} titres`);
-      }
-    } catch (e) {
-      alert("Erreur réseau lors de l’import.");
-    }
+  // ---- Copier dans le presse-papiers ----
+  function copyText(txt: string) {
+    navigator.clipboard.writeText(txt).catch(() =>
+      alert("Impossible de copier le texte.")
+    );
   }
 
+  // ---- Rafraîchissement auto ----
   useEffect(() => {
     refresh();
     const it = setInterval(refresh, 5000);
@@ -75,74 +72,152 @@ export default function HostClient({ slug }: { slug: string }) {
   }, []);
 
   return (
-    <main style={{ maxWidth: 720, margin: "0 auto", padding: "16px" }}>
-      <h1>🎤 File d’attente — {slug}</h1>
-
-      {/* Bouton d'import du catalogue */}
-      <button
-        onClick={importCatalog}
+    <main
+      style={{
+        maxWidth: 1200,
+        margin: "0 auto",
+        padding: "16px",
+        display: "grid",
+        gridTemplateColumns: "1fr 1fr",
+        gridTemplateRows: "auto 1fr",
+        gap: "16px",
+      }}
+    >
+      {/* === En cours === */}
+      <section
         style={{
-          marginTop: 12,
-          padding: "8px 14px",
-          cursor: "pointer",
-          background: "#eee",
-          border: "1px solid #ccc",
-          borderRadius: 6,
+          gridColumn: "1 / span 2",
+          background: "#f9f9f9",
+          padding: "16px",
+          borderRadius: 8,
+          border: "1px solid #ddd",
         }}
       >
-        📥 Mettre à jour le catalogue
-      </button>
-
-      <section style={{ marginTop: 24 }}>
-        <h2>En cours</h2>
+        <h2 style={{ marginBottom: 12 }}>🎤 En cours</h2>
         {data?.playing ? (
-          <p>
-            <span aria-hidden>▶</span>{" "}
-            <strong>{data.playing.title}</strong> — {data.playing.artist}{" "}
-            ({data.playing.display_name || "?"})
-          </p>
+          <>
+            <p style={{ fontSize: "1.2em", marginBottom: 12 }}>
+              ▶ <strong>{data.playing.title}</strong> — {data.playing.artist}{" "}
+              ({data.playing.display_name || "?"})
+            </p>
+            <button
+              onClick={playNext}
+              disabled={loading}
+              style={{
+                padding: "8px 12px",
+                cursor: loading ? "wait" : "pointer",
+                opacity: loading ? 0.6 : 1,
+              }}
+            >
+              ⏭ Lire la suivante
+            </button>
+          </>
         ) : (
-          <p>Aucune chanson en cours.</p>
+          <p>Aucun titre en cours.</p>
         )}
-        <button
-          onClick={playNext}
-          disabled={loading}
-          style={{
-            padding: "8px 12px",
-            marginTop: 8,
-            cursor: loading ? "wait" : "pointer",
-            opacity: loading ? 0.7 : 1,
-          }}
-        >
-          ⏭ Passer à la suivante
-        </button>
       </section>
 
-      <section style={{ marginTop: 24 }}>
-        <h2>À venir</h2>
+      {/* === À venir === */}
+      <section
+        style={{
+          background: "#f6f6f6",
+          padding: "16px",
+          borderRadius: 8,
+          border: "1px solid #ddd",
+        }}
+      >
+        <h2>📋 File d’attente</h2>
         {data.waiting.length === 0 ? (
           <p>Aucun titre en attente.</p>
         ) : (
           <ul style={{ paddingLeft: 0, listStyle: "none" }}>
             {data.waiting.map((r) => (
-              <li key={r.id} style={{ marginBottom: 6 }}>
-                {r.isNew && <span style={{ color: "green" }}>🆕 </span>}
-                <strong>{r.title}</strong> — {r.artist} ({r.display_name || "?"})
+              <li
+                key={r.id}
+                style={{
+                  marginBottom: 8,
+                  background: "#fff",
+                  border: "1px solid #ccc",
+                  borderRadius: 6,
+                  padding: "6px 8px",
+                  display: "flex",
+                  justifyContent: "space-between",
+                  alignItems: "center",
+                }}
+              >
+                <div>
+                  <strong>{r.title}</strong> — {r.artist}{" "}
+                  <span style={{ opacity: 0.7 }}>
+                    ({r.display_name || "?"})
+                  </span>
+                </div>
+                <div style={{ display: "flex", gap: 6 }}>
+                  <button
+                    onClick={() =>
+                      copyText(`${r.title} — ${r.artist}`)
+                    }
+                    title="Copier le titre + artiste"
+                    style={{
+                      padding: "4px 6px",
+                      border: "1px solid #ccc",
+                      borderRadius: 4,
+                      cursor: "pointer",
+                      background: "#fafafa",
+                    }}
+                  >
+                    🎵
+                  </button>
+                  <button
+                    onClick={() =>
+                      copyText(r.display_name || "")
+                    }
+                    title="Copier le nom du chanteur"
+                    style={{
+                      padding: "4px 6px",
+                      border: "1px solid #ccc",
+                      borderRadius: 4,
+                      cursor: "pointer",
+                      background: "#fafafa",
+                    }}
+                  >
+                    👤
+                  </button>
+                </div>
               </li>
             ))}
           </ul>
         )}
       </section>
 
-      <section style={{ marginTop: 24 }}>
-        <h2>Déjà passées</h2>
+      {/* === Déjà passées === */}
+      <section
+        style={{
+          background: "#f6f6f6",
+          padding: "16px",
+          borderRadius: 8,
+          border: "1px solid #ddd",
+        }}
+      >
+        <h2>✅ Déjà passées</h2>
         {data.played.length === 0 ? (
           <p>Aucun titre terminé.</p>
         ) : (
           <ul style={{ paddingLeft: 0, listStyle: "none" }}>
             {data.played.map((r) => (
-              <li key={r.id} style={{ marginBottom: 6 }}>
-                <strong>{r.title}</strong> — {r.artist} ({r.display_name || "?"})
+              <li
+                key={r.id}
+                style={{
+                  marginBottom: 8,
+                  background: "#fff",
+                  border: "1px solid #ccc",
+                  borderRadius: 6,
+                  padding: "6px 8px",
+                }}
+              >
+                <strong>{r.title}</strong> — {r.artist}{" "}
+                <span style={{ opacity: 0.7 }}>
+                  ({r.display_name || "?"})
+                </span>
               </li>
             ))}
           </ul>

@@ -48,6 +48,26 @@ export default function HostClient({ slug }: { slug: string }) {
     }
   }
 
+  async function importCatalog() {
+    try {
+      const r = await fetch("/api/catalog/import", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          url: "https://www.karafun.fr/cl/3107312/de746f0516a28e34c9802584192dc6d3/",
+        }),
+      });
+      const d = await r.json();
+      if (!r.ok) {
+        alert("Import raté : " + (d?.error || "inconnu"));
+      } else {
+        alert(`Import OK : ${d.imported} titres`);
+      }
+    } catch (e) {
+      alert("Erreur réseau lors de l’import.");
+    }
+  }
+
   useEffect(() => {
     refresh();
     const it = setInterval(refresh, 5000);
@@ -57,6 +77,21 @@ export default function HostClient({ slug }: { slug: string }) {
   return (
     <main style={{ maxWidth: 720, margin: "0 auto", padding: "16px" }}>
       <h1>🎤 File d’attente — {slug}</h1>
+
+      {/* Bouton d'import du catalogue */}
+      <button
+        onClick={importCatalog}
+        style={{
+          marginTop: 12,
+          padding: "8px 14px",
+          cursor: "pointer",
+          background: "#eee",
+          border: "1px solid #ccc",
+          borderRadius: 6,
+        }}
+      >
+        📥 Mettre à jour le catalogue
+      </button>
 
       <section style={{ marginTop: 24 }}>
         <h2>En cours</h2>

@@ -1,63 +1,64 @@
-// app/api/host/queue/route.ts
 import { NextResponse } from "next/server";
-import { sbServer } from "@/lib/supabaseServer";
-import { prepareQueue, Req } from "@/lib/ordering";
+import { createClient } from "@supabase/supabase-js";
+import { computeOrdering, type RequestRow } from "@/lib/ordering";
 
+export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-function noStore() {
-  return {
-    "Cache-Control":
-      "no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0",
-  };
+function getSupabase() {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const key =
+    process.env.SUPABASE_SERVICE_ROLE_KEY ??
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+  if (!url) throw new Error("ENV missing: NEXT_PUBLIC_SUPABASE_URL");
+  if (!key)
+    throw new Error(
+      "ENV missing: SUPABASE_SERVICE_ROLE_KEY (prefer) or NEXT_PUBLIC_SUPABASE_ANON_KEY"
+    );
+  return createClient(url, key, { auth: { persistSession: false } });
 }
 
 export async function GET() {
+  const db = getSupabase();
   try {
-    // En cours
-    const { data: playingData, error: ePlaying } = await sbServer
+    const { data, error } = await db
       .from("requests")
-      .select("*")
-      .eq("status", "playing")
-      .order("played_at", { ascending: false })
-      .limit(1);
-    if (ePlaying) throw ePlaying;
-    const playing: Req | null = playingData?.[0] ?? null;
+      .select("id,singer,title,artist,status,created_at")
+      .in("status", ["waiting", "playing", "done"])
+      .order("created_at", { ascending: true });
 
-    // En attente (pending/approved)
-    const { data: waitingData, error: eWaiting } = await sbServer
-      .from("requests")
-      .select("*")
-      .in("status", ["pending", "approved"]);
-    if (eWaiting) throw eWaiting;
-    const waitingRaw: Req[] = waitingData ?? [];
+    if (error) throw error;
 
-    // Déjà chantées (done)
-    const { data: playedData, error: eDone } = await sbServer
-      .from("requests")
-      .select("*")
-      .eq("status", "done")
-      .order("played_at", { ascending: false })
-      .limit(30);
-    if (eDone) throw eDone;
-    const played: Req[] = playedData ?? [];
+    const reqs = (data ?? []) as RequestRow[];
+    const playing = reqs.find((r) => r.status === "playing") || null;
+    const done = reqs.filter((r) => r.status === "done");
 
-    // Ordonner la file
-    const waiting = prepareQueue(waitingRaw, played, playing);
+    const ord = computeOrdering({
+      requests: reqs,
+      alreadyPlayed: done.map((d) => ({ title: d.title, artist: d.artist })),
+      maxQueue: 15,
+    });
 
-    return NextResponse.json(
-      {
-        playing,
-        waiting,
-        played,
-      },
-      { headers: noStore() }
-    );
-  } catch (err: any) {
-    console.error("[host/queue] error:", err?.message || err);
-    return NextResponse.json(
-      { error: err?.message || "Erreur host/queue" },
-      { status: 500, headers: noStore() }
-    );
+    const waitingOrdered = ord.orderedWaiting
+      .map((id) => reqs.find((r) => r.id === id))
+      .filter(Boolean) as RequestRow[];
+
+    const recentDone = done
+      .sort(
+        (a, b) =>
+          new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+      )
+      .slice(0, 20);
+
+    return NextResponse.json({
+      ok: true,
+      playing,
+      waiting: waitingOrdered,
+      done: recentDone,
+    });
+  } catch (e: unknown) {
+    console.error("Erreur /api/host/queue :", e);
+    const msg = e instanceof Error ? e.message : String(e);
+    return NextResponse.json({ ok: false, error: msg }, { status: 500 });
   }
 }

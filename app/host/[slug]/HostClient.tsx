@@ -22,16 +22,21 @@ export default function HostClient({ slug }: { slug: string }) {
     waiting: [],
     played: [],
   });
-  const [loading, setLoading] = useState(false);
+  const [loadingNext, setLoadingNext] = useState(false);
 
   // ---- Chargement file d'attente ----
   async function refresh() {
     try {
-      const r = await fetch("/api/host/queue");
-      const d = await r.json();
-      setData(d);
+      const r = await fetch("/api/host/queue", { cache: "no-store" });
+      const text = await r.text();
+      try {
+        const d = JSON.parse(text) as QueueData;
+        setData(d);
+      } catch {
+        console.warn(`[${label}] /api/host/queue non-JSON:`, text);
+      }
     } catch (e) {
-      console.error(e);
+      console.error(`[${label}] /api/host/queue error:`, e);
     }
   }
 
@@ -66,8 +71,8 @@ export default function HostClient({ slug }: { slug: string }) {
 
   // ---- Rafraîchissement auto ----
   useEffect(() => {
-    refresh();
-    const it = setInterval(refresh, 5000);
+    refresh("on-mount");
+    const it = setInterval(() => refresh("interval"), 5000);
     return () => clearInterval(it);
   }, []);
 
@@ -202,7 +207,7 @@ export default function HostClient({ slug }: { slug: string }) {
         {data.played.length === 0 ? (
           <p>Aucun titre terminé.</p>
         ) : (
-          <ul style={{ paddingLeft: 0, listStyle: "none" }}>
+          <ul style={{ listStyle: "none", paddingLeft: 0, margin: 0 }}>
             {data.played.map((r) => (
               <li
                 key={r.id}

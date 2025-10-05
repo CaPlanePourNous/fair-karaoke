@@ -1,61 +1,103 @@
-// app/api/host/play/route.ts
 import { NextResponse } from "next/server";
-import { sbServer } from "@/lib/supabaseServer";
-import { prepareQueue, Req } from "@/lib/ordering";
+import { createClient } from "@supabase/supabase-js";
+import { computeOrdering, type RequestRow } from "@/lib/ordering";
 
-export async function POST(req: Request) {
-  const body = await req.json().catch(() => ({}));
-  const { id, next } = body;
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 
-  // Récupère la chanson en cours
-  const { data: playingData } = await sbServer
-    .from("requests")
-    .select("*")
-    .eq("status", "playing")
-    .order("played_at", { ascending: false })
-    .limit(1);
+function getSupabase() {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const key =
+    process.env.SUPABASE_SERVICE_ROLE_KEY ??
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+  if (!url) throw new Error("ENV missing: NEXT_PUBLIC_SUPABASE_URL");
+  if (!key)
+    throw new Error(
+      "ENV missing: SUPABASE_SERVICE_ROLE_KEY (prefer) or NEXT_PUBLIC_SUPABASE_ANON_KEY"
+    );
+  return createClient(url, key, { auth: { persistSession: false } });
+}
 
-  const playing: Req | null = playingData?.[0] || null;
-
-  if (id) {
-    if (playing) {
-      return NextResponse.json(
-        { error: "Une chanson est déjà en cours." },
-        { status: 400 }
-      );
-    }
-    await sbServer
+export async function POST() {
+  const db = getSupabase();
+  try {
+    // État actuel
+    const { data, error } = await db
       .from("requests")
-      .update({ status: "playing", played_at: new Date().toISOString() })
-      .eq("id", id);
-    return NextResponse.json({ ok: true });
-  }
+      .select("id,singer,title,artist,ip,status,created_at")
+      .in("status", ["waiting", "playing", "done"])
+      .order("created_at", { ascending: true });
 
-  if (next) {
-    if (playing) {
-      await sbServer.from("requests").update({ status: "done" }).eq("id", playing.id);
-    }
-    // Cherche le prochain
-    const { data: waitingData } = await sbServer
-      .from("requests")
-      .select("*")
-      .in("status", ["pending", "approved"]);
+    if (error) throw error;
 
-    const { data: playedData } = await sbServer
-      .from("requests")
-      .select("*")
-      .in("status", ["done"]);
+    const reqs = (data ?? []) as RequestRow[];
+    const playing = reqs.find((r) => r.status === "playing") || null;
+    const done = reqs.filter((r) => r.status === "done");
 
-    const waiting = prepareQueue(waitingData || [], playedData || [], null);
-    if (waiting.length > 0) {
-      const nextSong = waiting[0];
-      await sbServer
+    // Recalcul de la file + rejets auto
+    const ord = computeOrdering({
+      requests: reqs,
+      alreadyPlayed: done.map((d) => ({ title: d.title, artist: d.artist })),
+      maxQueue: 15,
+    });
+
+    // Rejets auto
+    if (ord.rejectIds.length) {
+      const { error: eRej } = await db
         .from("requests")
-        .update({ status: "playing", played_at: new Date().toISOString() })
-        .eq("id", nextSong.id);
+        .update({ status: "rejected" })
+        .in("id", ord.rejectIds);
+      if (eRej) throw eRej;
     }
-    return NextResponse.json({ ok: true });
-  }
 
-  return NextResponse.json({ error: "Requête invalide." }, { status: 400 });
+    // Forcer EXACTEMENT la liste "waiting"
+    const currentWaitingIds = reqs
+      .filter((r) => r.status === "waiting")
+      .map((r) => r.id);
+    const keep = new Set(ord.orderedWaiting);
+    const toReject = currentWaitingIds.filter(
+      (id) => !keep.has(id) && !ord.rejectIds.includes(id)
+    );
+    if (toReject.length) {
+      const { error: eRej2 } = await db
+        .from("requests")
+        .update({ status: "rejected" })
+        .in("id", toReject);
+      if (eRej2) throw eRej2;
+    }
+    if (ord.orderedWaiting.length) {
+      const { error: eWait } = await db
+        .from("requests")
+        .update({ status: "waiting" })
+        .in("id", ord.orderedWaiting);
+      if (eWait) throw eWait;
+    }
+
+    // Lire la suivante : playing -> done, 1er waiting -> playing
+    if (playing?.id) {
+      const { error: eDone } = await db
+        .from("requests")
+        .update({ status: "done" })
+        .eq("id", playing.id);
+      if (eDone) throw eDone;
+    }
+    const nextId = ord.orderedWaiting[0];
+    if (nextId) {
+      const { error: ePlay } = await db
+        .from("requests")
+        .update({ status: "playing" })
+        .eq("id", nextId);
+      if (ePlay) throw ePlay;
+    }
+
+    return NextResponse.json({
+      ok: true,
+      promoted: nextId ?? null,
+      justDone: playing?.id ?? null,
+    });
+  } catch (e: unknown) {
+    console.error("Erreur /api/host/play :", e);
+    const msg = e instanceof Error ? e.message : String(e);
+    return NextResponse.json({ ok: false, error: msg }, { status: 500 });
+  }
 }

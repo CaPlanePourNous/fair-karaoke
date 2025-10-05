@@ -66,8 +66,10 @@ export async function POST(req: Request) {
     if (error) throw error;
 
     return NextResponse.json({ ok: true });
-  } catch (e) {
-    console.error("Erreur /api/requests :", e);
-    return NextResponse.json({ error: e.message }, { status: 500 });
-  }
+  } catch (e: unknown) {
+  console.error("Erreur /api/host/queue :", e);
+  const msg = e instanceof Error ? e.message : String(e);
+  return NextResponse.json({ error: msg }, { status: 500 });
+}
+
 }

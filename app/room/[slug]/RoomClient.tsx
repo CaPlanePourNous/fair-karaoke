@@ -159,7 +159,9 @@ export default function RoomClient({ slug }: { slug: string }) {
 
   return (
     <main className={styles.room} style={{ maxWidth: 720, margin: "0 auto", padding: "16px" }}>
-      <h1 className={styles.title}>🎤 Karaoké – {isLantignie ? "Lantignié" : slug} 🎶</h1>
+      <h1 className={styles.title}>
+        🎤 Karaoké – {isLantignie ? "Lantignié" : slug} 🎶
+      </h1>
 
       {stats && (
         <p style={{
@@ -243,76 +245,80 @@ export default function RoomClient({ slug }: { slug: string }) {
       )}
 
       <hr style={{ margin: '24px 0' }} />
-      <h2>🎁 Tirage au sort</h2>
-      <p>Inscris ton nom pour participer (une inscription par personne).</p>
 
-      <button
-        onClick={async () => {
-          if (lotteryLoading) return;
-          if (!displayName.trim()) {
-            setMsg('Renseigne ton nom avant de t’inscrire au tirage.');
-            return;
-          }
-          setLotteryLoading(true);
-          try {
-            const r = await fetch('/api/lottery/register', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ display_name: displayName.trim() })
-            });
-            const d = await r.json();
-            if (!r.ok) setMsg('Erreur tirage : ' + (d.error || 'inconnue'));
-            else {
-              setMsg('Inscription au tirage enregistrée ✅');
-              if (d.id) saveEntryId(d.id);
+      {/* ==== Bloc Tirage au sort (préserve le look) ==== */}
+      <section className={styles.lottery}>
+        <h2>🎁 Tirage au sort</h2>
+        <p>Inscris ton nom pour participer (une inscription par personne).</p>
+
+        <button
+          onClick={async () => {
+            if (lotteryLoading) return;
+            if (!displayName.trim()) {
+              setMsg('Renseigne ton nom avant de t’inscrire au tirage.');
+              return;
             }
-          } catch {
-            setMsg('Erreur réseau (tirage).');
-          } finally {
-            setLotteryLoading(false);
-          }
-        }}
-        className={isLantignie ? styles.neonButton : undefined}
-        style={!isLantignie ? { padding: '8px 14px', cursor: lotteryLoading ? 'wait' : 'pointer', opacity: lotteryLoading ? .7 : 1 } : undefined}
-        disabled={lotteryLoading}
-      >
-        {lotteryLoading ? "..." : "M’inscrire au tirage"}
-      </button>
-
-      {!soundReady && (
-        <p style={{ marginTop: 8 }}>
-          🔊 Pour être alerté si tu es tiré, active le son :
-          <button onClick={armSound} style={{ marginLeft: 8, padding: '6px 10px' }}>
-            Activer le son
-          </button>
-        </p>
-      )}
-
-      {won && (
-        <div
-          style={{
-            position: 'fixed',
-            inset: 0,
-            background: '#1db954',
-            color: '#fff',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            flexDirection: 'column',
-            zIndex: 9999,
-            textAlign: 'center',
-            padding: '20px'
+            setLotteryLoading(true);
+            try {
+              const r = await fetch('/api/lottery/register', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ display_name: displayName.trim() })
+              });
+              const d = await r.json();
+              if (!r.ok) setMsg('Erreur tirage : ' + (d.error || 'inconnue'));
+              else {
+                setMsg('Inscription au tirage enregistrée ✅');
+                if (d.id) saveEntryId(d.id);
+              }
+            } catch {
+              setMsg('Erreur réseau (tirage).');
+            } finally {
+              setLotteryLoading(false);
+            }
           }}
+          className={isLantignie ? styles.neonButton : undefined}
+          style={!isLantignie ? { padding: '8px 14px', cursor: lotteryLoading ? 'wait' : 'pointer', opacity: lotteryLoading ? .7 : 1 } : undefined}
+          disabled={lotteryLoading}
         >
-          <div style={{ fontSize: 28, marginBottom: 8 }}>🎉 TU AS GAGNÉ ! 🎉</div>
-          <div style={{ fontSize: 20, opacity: 0.9 }}>
-            {displayName ? displayName : 'Bravo !'}
+          {lotteryLoading ? "..." : "M’inscrire au tirage"}
+        </button>
+
+        {!soundReady && (
+          <p style={{ marginTop: 8 }}>
+            🔊 Pour être alerté si tu es tiré, active le son :
+            <button onClick={armSound} style={{ marginLeft: 8, padding: '6px 10px' }}>
+              Activer le son
+            </button>
+          </p>
+        )}
+
+        {won && (
+          <div
+            style={{
+              position: 'fixed',
+              inset: 0,
+              background: '#1db954',
+              color: '#fff',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              flexDirection: 'column',
+              zIndex: 9999,
+              textAlign: 'center',
+              padding: '20px'
+            }}
+          >
+            <div style={{ fontSize: 28, marginBottom: 8 }}>🎉 TU AS GAGNÉ ! 🎉</div>
+            <div style={{ fontSize: 20, opacity: 0.9 }}>
+              {displayName ? displayName : 'Bravo !'}
+            </div>
+            <div style={{ marginTop: 16, fontSize: 14, opacity: 0.8 }}>
+              Attends que l’animateur te fasse signe 😉
+            </div>
           </div>
-          <div style={{ marginTop: 16, fontSize: 14, opacity: 0.8 }}>
-            Attends que l’animateur te fasse signe 😉
-          </div>
-        </div>
-      )}
+        )}
+      </section>
     </main>
   );
 }

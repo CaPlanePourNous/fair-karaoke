@@ -20,8 +20,13 @@
     0 0 14px rgba(91, 225, 255, .35);
 }
 
-.neonButton:hover { transform: translateY(-1px); }
-.neonButton:active { transform: translateY(0); }
+.neonButton:hover {
+  transform: translateY(-1px);
+}
+
+.neonButton:active {
+  transform: translateY(0);
+}
 
 /* Glow externe animé (léger) */
 .neonButton::after {
@@ -48,13 +53,14 @@
   outline: 2px solid #5be1ff;
   outline-offset: 3px;
 }
+
 .neonButton[disabled] {
   opacity: .55;
   cursor: not-allowed;
   box-shadow: none;
 }
 
-/* ==== Overrides pour la page Room : pas de néon ==== */
+/* ==== Overrides pour la page Room : pas de néon global ==== */
 .room h1,
 .room h2,
 .room h3 {
@@ -72,4 +78,9 @@
 .room .card {
   box-shadow: none;
   border: 1px solid rgba(255, 255, 255, 0.12);
+}
+
+/* ==== Réactive le glow uniquement pour le titre du tirage ==== */
+.room .lottery h2 {
+  text-shadow: 0 0 6px var(--accent-color);
 }

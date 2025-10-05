@@ -44,8 +44,10 @@ export async function GET() {
       waiting,
       played: playedData || [],
     });
-  } catch (e) {
-    console.error("Erreur /api/host/queue :", e);
-    return NextResponse.json({ error: e.message }, { status: 500 });
-  }
+ } catch (e: unknown) {
+  console.error("Erreur /api/host/queue :", e);
+  const msg = e instanceof Error ? e.message : String(e);
+  return NextResponse.json({ error: msg }, { status: 500 });
+}
+
 }

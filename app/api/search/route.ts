@@ -1,23 +1,23 @@
 // app/api/search/route.ts
-export const runtime = "nodejs";         // <— force l’environnement Node (fs OK)
-export const dynamic = "force-dynamic";  // <— évite mise en cache
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 
 import { NextRequest, NextResponse } from "next/server";
 import fs from "fs";
 import path from "path";
 import { parse } from "csv-parse/sync";
 
-let cache:
-  | { id: string; title: string; artist: string }[]
-  | null = null;
+type Song = { id: string; title: string; artist: string };
 
-function loadCSV() {
+let cache: Song[] | null = null;
+
+function loadCSV(): Song[] {
   if (cache) return cache;
 
   const csvPath = path.join(process.cwd(), "public", "karafun.csv");
   const csv = fs.readFileSync(csvPath, "utf8");
 
-  // Détecte automatiquement le séparateur (',' vs ';')
+  // Détecte le séparateur
   const header = csv.split(/\r?\n/)[0] ?? "";
   const delimiter = header.includes(";") ? ";" : ",";
 
@@ -31,12 +31,12 @@ function loadCSV() {
   });
 
   cache = records.map((r: any) => ({
-    id: (r.Id ?? r.id ?? "").toString().trim(),
-    title: (r.Title ?? r.title ?? "").toString().trim(),
-    artist: (r.Artist ?? r.artist ?? "").toString().trim(),
+    id: String(r.Id ?? r.id ?? "").trim(),
+    title: String(r.Title ?? r.title ?? "").trim(),
+    artist: String(r.Artist ?? r.artist ?? "").trim(),
   }));
 
-  return cache;
+  return cache!;
 }
 
 export async function GET(req: NextRequest) {
@@ -53,7 +53,15 @@ export async function GET(req: NextRequest) {
         s.artist.toLowerCase().includes(q)
     );
 
-    return NextResponse.json(results.slice(0, 20));
+    // Ajout de l'URL KaraFun (recherche titre + artiste)
+    const payload = results.slice(0, 20).map((s) => ({
+      ...s,
+      url: `https://www.karafun.fr/search/?query=${encodeURIComponent(
+        `${s.title} ${s.artist}`
+      )}`,
+    }));
+
+    return NextResponse.json(payload);
   } catch (err) {
     console.error("[/api/search] CSV read/parse error:", err);
     return NextResponse.json({ error: "CSV read error" }, { status: 500 });

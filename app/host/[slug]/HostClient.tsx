@@ -1,265 +1,228 @@
+// app/host/[slug]/HostClient.tsx
 "use client";
+import { useEffect, useState } from "react";
 
-import { useEffect, useMemo, useState } from "react";
-
-type Item = {
-  id?: string | number;
+type Req = {
+  id: string;
   title: string;
   artist: string;
-  display_name?: string;
+  display_name: string | null;
+  isNew?: boolean;
 };
 
-type HostQueuePayload = {
-  playing?: Item | null;
-  waiting?: Item[];
-  played?: Item[];
+type QueueData = {
+  playing: Req | null;
+  waiting: Req[];
+  played: Req[];
 };
 
 export default function HostClient({ slug }: { slug: string }) {
-  const isLantignie = slug.toLowerCase() === "lantignie";
-
-  const [data, setData] = useState<HostQueuePayload>({
+  const [data, setData] = useState<QueueData>({
     playing: null,
     waiting: [],
     played: [],
   });
-  const [error, setError] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
+  const [loading, setLoading] = useState(false);
 
-  // --- Fetch queue periodically (background) ---
-  const fetchQueue = async () => {
+  // ---- Chargement file d'attente ----
+  async function refresh() {
     try {
-      const r = await fetch("/api/host/queue", { cache: "no-store" });
-      if (!r.ok) throw new Error("HTTP " + r.status);
-      const d = (await r.json()) as HostQueuePayload;
-      setData({
-        playing: d?.playing ?? null,
-        waiting: Array.isArray(d?.waiting) ? d.waiting : [],
-        played: Array.isArray(d?.played) ? d.played : [],
-      });
-      setError(null);
-    } catch (e: any) {
-      setError("Impossible de charger la file");
+      const r = await fetch("/api/host/queue");
+      const d = await r.json();
+      setData(d);
+    } catch (e) {
+      console.error(e);
     }
-  };
+  }
 
-  useEffect(() => {
-    fetchQueue();
-    const it = setInterval(fetchQueue, 5000);
-    return () => clearInterval(it);
-  }, []);
-
-  // --- Helpers copy ---
-  const copy = async (txt: string) => {
+  // ---- Passer à la suivante ----
+  async function playNext() {
+    if (loading) return;
+    setLoading(true);
     try {
-      await navigator.clipboard.writeText(txt);
-    } catch {
-      const ta = document.createElement("textarea");
-      ta.value = txt;
-      ta.style.position = "fixed";
-      ta.style.left = "-9999px";
-      document.body.appendChild(ta);
-      ta.select();
-      document.execCommand("copy");
-      document.body.removeChild(ta);
-    }
-  };
-  const copyTitleArtist = (it: Item) => copy(`${it.title} — ${it.artist}`);
-  const copySinger = (it: Item) => copy(it.display_name ?? "");
-
-  const waitingFirstTwo = useMemo(() => (data.waiting ?? []).slice(0, 2), [data.waiting]);
-
-  // Peut passer à la suivante seulement s'il y a au moins 1 en attente
-  const canNext = Array.isArray(data.waiting) && data.waiting.length > 0;
-
-  // --- Action: Lire la suivante -> POST /api/host/next (gère done + start) ---
-  const handleNext = async () => {
-    if (busy || !canNext) return;
-    setBusy(true);
-    try {
-      const r = await fetch("/api/host/next", {
+      const r = await fetch("/api/host/play", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ next: true }),
       });
       if (!r.ok) {
         const d = await r.json().catch(() => ({}));
-        throw new Error(d?.error || "Échec de /api/host/next");
+        throw new Error(d?.error || "Erreur /api/host/play");
       }
-      await fetchQueue();
-    } catch (e: any) {
-      setError(e?.message || "Impossible de passer à la suivante");
+      await refresh();
+    } catch (err) {
+      console.error(err);
     } finally {
-      setBusy(false);
+      setLoading(false);
     }
-  };
+  }
 
-  // --- Styles sobres ---
-  const card: React.CSSProperties = {
-    border: "1px solid #e6e6e6",
-    borderRadius: 10,
-    padding: 12,
-    background: "#fff",
-  };
-  const btn: React.CSSProperties = {
-    display: "inline-flex",
-    alignItems: "center",
-    gap: 8,
-    padding: "8px 12px",
-    border: "1px solid #ddd",
-    borderRadius: 999,
-    background: "#f7f7f7",
-    cursor: "pointer",
-  };
-  const btnPrimary: React.CSSProperties = {
-    ...btn,
-    background: "#efefef",
-    fontWeight: 600,
-  };
+  // ---- Copier dans le presse-papiers ----
+  function copyText(txt: string) {
+    navigator.clipboard.writeText(txt).catch(() =>
+      alert("Impossible de copier le texte.")
+    );
+  }
+
+  // ---- Rafraîchissement auto ----
+  useEffect(() => {
+    refresh();
+    const it = setInterval(refresh, 5000);
+    return () => clearInterval(it);
+  }, []);
 
   return (
-    <main style={{ maxWidth: 1100, margin: "0 auto", padding: 16 }}>
-      <h1>🎤 Karaoké — {isLantignie ? "Lantignié" : slug}</h1>
-
-      {error && <p style={{ color: "#b00", margin: "8px 0" }}>{error}</p>}
-
-      {/* Zone 1 : En cours */}
-      <section style={{ ...card, marginTop: 12 }}>
-        <h2 style={{ margin: 0 }}>En cours</h2>
-        {data.playing ? (
-          <div style={{ marginTop: 8 }}>
-            <div style={{ fontSize: 20, fontWeight: 700 }}>
-              {data.playing.title} — {data.playing.artist}
-            </div>
-            {data.playing.display_name && (
-              <div style={{ opacity: 0.8, marginTop: 4 }}>
-                Chanteur·euse : <strong>{data.playing.display_name}</strong>
-              </div>
-            )}
-            <div style={{ marginTop: 10, display: "flex", gap: 8, flexWrap: "wrap" }}>
-              <button style={btn} onClick={() => copyTitleArtist(data.playing!)}>Copier Titre+Artiste</button>
-              {data.playing.display_name && (
-                <button style={btn} onClick={() => copySinger(data.playing!)}>Copier Nom</button>
-              )}
-            </div>
-          </div>
+    <main
+      style={{
+        maxWidth: 1200,
+        margin: "0 auto",
+        padding: "16px",
+        display: "grid",
+        gridTemplateColumns: "1fr 1fr",
+        gridTemplateRows: "auto 1fr",
+        gap: "16px",
+      }}
+    >
+      {/* === En cours === */}
+      <section
+        style={{
+          gridColumn: "1 / span 2",
+          background: "#f9f9f9",
+          padding: "16px",
+          borderRadius: 8,
+          border: "1px solid #ddd",
+        }}
+      >
+        <h2 style={{ marginBottom: 12 }}>🎤 En cours</h2>
+        {data?.playing ? (
+          <>
+            <p style={{ fontSize: "1.2em", marginBottom: 12 }}>
+              ▶ <strong>{data.playing.title}</strong> — {data.playing.artist}{" "}
+              ({data.playing.display_name || "?"})
+            </p>
+            <button
+              onClick={playNext}
+              disabled={loading}
+              style={{
+                padding: "8px 12px",
+                cursor: loading ? "wait" : "pointer",
+                opacity: loading ? 0.6 : 1,
+              }}
+            >
+              ⏭ Lire la suivante
+            </button>
+          </>
         ) : (
-          <p style={{ marginTop: 8, opacity: 0.8 }}>Aucune lecture en cours.</p>
+          <p>Aucun titre en cours.</p>
         )}
       </section>
 
-      {/* Zone bouton central : Lire la suivante */}
-      <div style={{ display: "flex", justifyContent: "center", margin: "14px 0" }}>
-        <button
-          style={btnPrimary}
-          onClick={handleNext}
-          disabled={!canNext || busy}
-          aria-busy={busy}
-          title="Marque la chanson en cours comme terminée et lance la suivante"
-        >
-          {"▶"} Lire la suivante
-        </button>
-      </div>
-
-      {/* Zone 2 : grille 2 colonnes (Attente / Passées) */}
+      {/* === À venir === */}
       <section
         style={{
-          display: "grid",
-          gridTemplateColumns: "1fr 1fr",
-          gap: 16,
+          background: "#f6f6f6",
+          padding: "16px",
+          borderRadius: 8,
+          border: "1px solid #ddd",
         }}
       >
-        {/* Colonne gauche : File d'attente */}
-        <div style={card}>
-          <h2 style={{ marginTop: 0 }}>File d’attente</h2>
-          {Array.isArray(data.waiting) && data.waiting.length > 0 ? (
-            <ul style={{ listStyle: "none", padding: 0, margin: "8px 0 0 0" }}>
-              {data.waiting.map((it, idx) => (
-                <li
-                  key={(it.id ?? idx).toString()}
-                  style={{
-                    padding: "8px 0",
-                    borderBottom: "1px solid #f1f1f1",
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "space-between",
-                    gap: 8,
-                  }}
-                >
-                  <div style={{ minWidth: 0 }}>
-                    <div style={{ fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                      {it.title} — {it.artist}
-                    </div>
-                    {it.display_name && (
-                      <div style={{ opacity: 0.8, fontSize: 13 }}>{it.display_name}</div>
-                    )}
-                  </div>
-
-                  {/* Boutons de copie SEULEMENT pour les deux premiers de la file */}
-                  {idx < 2 && (
-                    <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                      <button style={btn} onClick={() => copyTitleArtist(it)} title="Copier Titre + Artiste">
-                        Copier T+A
-                      </button>
-                      {it.display_name && (
-                        <button style={btn} onClick={() => copySinger(it)} title="Copier Nom">
-                          Copier Nom
-                        </button>
-                      )}
-                    </div>
-                  )}
-                </li>
-              ))}
-            </ul>
-          ) : (
-            <p style={{ marginTop: 8, opacity: 0.8 }}>Personne en attente.</p>
-          )}
-        </div>
-
-        {/* Colonne droite : Chansons passées */}
-        <div style={card}>
-          <h2 style={{ marginTop: 0 }}>Passées</h2>
-          {Array.isArray(data.played) && data.played.length > 0 ? (
-            <ul style={{ listStyle: "none", padding: 0, margin: "8px 0 0 0" }}>
-              {data.played.map((it, idx) => (
-                <li
-                  key={(it.id ?? `p-${idx}`).toString()}
-                  style={{
-                    padding: "8px 0",
-                    borderBottom: "1px solid #f1f1f1",
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "space-between",
-                    gap: 8,
-                  }}
-                >
-                  <div style={{ minWidth: 0 }}>
-                    <div style={{ fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                      {it.title} — {it.artist}
-                    </div>
-                    {it.display_name && (
-                      <div style={{ opacity: 0.8, fontSize: 13 }}>{it.display_name}</div>
-                    )}
-                  </div>
-                </li>
-              ))}
-            </ul>
-          ) : (
-            <p style={{ marginTop: 8, opacity: 0.8 }}>Aucune chanson passée pour l’instant.</p>
-          )}
-        </div>
+        <h2>📋 File d’attente</h2>
+        {data.waiting.length === 0 ? (
+          <p>Aucun titre en attente.</p>
+        ) : (
+          <ul style={{ paddingLeft: 0, listStyle: "none" }}>
+            {data.waiting.map((r) => (
+              <li
+                key={r.id}
+                style={{
+                  marginBottom: 8,
+                  background: "#fff",
+                  border: "1px solid #ccc",
+                  borderRadius: 6,
+                  padding: "6px 8px",
+                  display: "flex",
+                  justifyContent: "space-between",
+                  alignItems: "center",
+                }}
+              >
+                <div>
+                  <strong>{r.title}</strong> — {r.artist}{" "}
+                  <span style={{ opacity: 0.7 }}>
+                    ({r.display_name || "?"})
+                  </span>
+                </div>
+                <div style={{ display: "flex", gap: 6 }}>
+                  <button
+                    onClick={() =>
+                      copyText(`${r.title} — ${r.artist}`)
+                    }
+                    title="Copier le titre + artiste"
+                    style={{
+                      padding: "4px 6px",
+                      border: "1px solid #ccc",
+                      borderRadius: 4,
+                      cursor: "pointer",
+                      background: "#fafafa",
+                    }}
+                  >
+                    🎵
+                  </button>
+                  <button
+                    onClick={() =>
+                      copyText(r.display_name || "")
+                    }
+                    title="Copier le nom du chanteur"
+                    style={{
+                      padding: "4px 6px",
+                      border: "1px solid #ccc",
+                      borderRadius: 4,
+                      cursor: "pointer",
+                      background: "#fafafa",
+                    }}
+                  >
+                    👤
+                  </button>
+                </div>
+              </li>
+            ))}
+          </ul>
+        )}
       </section>
 
-      {/* Responsive : pile en 1 colonne en dessous de 900px */}
-      <style jsx>{`
-        @media (max-width: 900px) {
-          section:nth-of-type(3) {
-            display: block !important;
-          }
-          section:nth-of-type(3) > div + div {
-            margin-top: 16px;
-          }
-        }
-      `}</style>
+      {/* === Déjà passées === */}
+      <section
+        style={{
+          background: "#f6f6f6",
+          padding: "16px",
+          borderRadius: 8,
+          border: "1px solid #ddd",
+        }}
+      >
+        <h2>✅ Déjà passées</h2>
+        {data.played.length === 0 ? (
+          <p>Aucun titre terminé.</p>
+        ) : (
+          <ul style={{ paddingLeft: 0, listStyle: "none" }}>
+            {data.played.map((r) => (
+              <li
+                key={r.id}
+                style={{
+                  marginBottom: 8,
+                  background: "#fff",
+                  border: "1px solid #ccc",
+                  borderRadius: 6,
+                  padding: "6px 8px",
+                }}
+              >
+                <strong>{r.title}</strong> — {r.artist}{" "}
+                <span style={{ opacity: 0.7 }}>
+                  ({r.display_name || "?"})
+                </span>
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
     </main>
   );
 }

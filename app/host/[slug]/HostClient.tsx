@@ -24,47 +24,73 @@ export default function HostClient({ slug }: { slug: string }) {
   });
   const [loading, setLoading] = useState(false);
 
-  // ---- Rafraîchit les données ----
+  // ---- Rafraîchissement principal ----
   async function refresh() {
     try {
       const r = await fetch("/api/host/queue");
       const d = await r.json();
       setData(d);
     } catch (e) {
-      console.error(e);
+      console.error("Erreur refresh():", e);
     }
   }
 
-  // ---- Passe à la suivante ----
+  // ---- Fonction de passage à la suivante ----
   async function playNext() {
     if (loading) return;
     setLoading(true);
+
+    // Mise à jour locale immédiate pour retour visuel
+    setData((prev) => {
+      const next = prev.waiting[0];
+      if (!next) return prev;
+      const playedNow = prev.playing ? [prev.playing, ...prev.played] : prev.played;
+      return {
+        playing: next,
+        waiting: prev.waiting.slice(1),
+        played: playedNow,
+      };
+    });
+
     try {
       const r = await fetch("/api/host/play", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ next: true }),
+        body: JSON.stringify({ next: true, slug }),
       });
+
+      const text = await r.text();
+      console.log("[/api/host/play] status:", r.status);
+      console.log("[/api/host/play] body:", text);
+
       if (!r.ok) {
-        const d = await r.json().catch(() => ({}));
-        throw new Error(d?.error || "Erreur /api/host/play");
+        let msg = "Erreur /api/host/play";
+        try {
+          const j = JSON.parse(text);
+          msg = j?.error || msg;
+        } catch {}
+        alert(msg);
       }
+
+      // resynchronisation serveur
       await refresh();
     } catch (err) {
-      console.error(err);
+      console.error("playNext() network error:", err);
+      alert("Erreur réseau ou API indisponible.");
+      await refresh();
     } finally {
       setLoading(false);
     }
   }
 
-  // ---- Copie texte ----
+  // ---- Copier texte ----
   function copyText(txt: string) {
     navigator.clipboard
       .writeText(txt)
       .catch(() => alert("Impossible de copier le texte."));
   }
 
-  // ---- Rafraîchissement automatique ----
+  // ---- Rafraîchissement auto ----
   useEffect(() => {
     refresh();
     const it = setInterval(refresh, 5000);
@@ -95,32 +121,30 @@ export default function HostClient({ slug }: { slug: string }) {
       >
         <h2 style={{ marginBottom: 12 }}>🎤 En cours</h2>
         {data?.playing ? (
-          <>
-            <p style={{ fontSize: "1.2em", marginBottom: 12 }}>
-              ▶ <strong>{data.playing.title}</strong> — {data.playing.artist}{" "}
-              ({data.playing.display_name || "?"})
-            </p>
-          </>
+          <p style={{ fontSize: "1.2em", marginBottom: 12 }}>
+            ▶ <strong>{data.playing.title}</strong> — {data.playing.artist}{" "}
+            ({data.playing.display_name || "?"})
+          </p>
         ) : (
           <p>Aucun titre en cours.</p>
         )}
 
-        {/* Bouton toujours visible */}
         <button
           onClick={playNext}
-          disabled={loading}
           style={{
             padding: "8px 12px",
             marginTop: 8,
-            cursor: loading ? "wait" : "pointer",
-            opacity: loading ? 0.6 : 1,
+            cursor: "pointer",
+            background: "#f0f0f0",
+            border: "1px solid #ccc",
+            borderRadius: 6,
           }}
         >
           ⏭ Lire la suivante
         </button>
       </section>
 
-      {/* === File d’attente === */}
+      {/* === À venir === */}
       <section
         style={{
           background: "#f6f6f6",

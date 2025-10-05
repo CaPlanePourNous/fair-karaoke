@@ -158,12 +158,8 @@ export default function RoomClient({ slug }: { slug: string }) {
   }
 
   return (
-    <main style={{ maxWidth: 720, margin: "0 auto", padding: "16px" }}>
-      {isLantignie ? (
-        <h1 className={styles.neonTitle}>🎤 Karaoké – Lantignié 🎶</h1>
-      ) : (
-        <h1>Karaoké – {slug}</h1>
-      )}
+    <main className={styles.room} style={{ maxWidth: 720, margin: "0 auto", padding: "16px" }}>
+      <h1 className={styles.title}>🎤 Karaoké – {isLantignie ? "Lantignié" : slug} 🎶</h1>
 
       {stats && (
         <p style={{

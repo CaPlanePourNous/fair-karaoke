@@ -26,10 +26,13 @@
 /* Glow externe animé (léger) */
 .neonButton::after {
   content: "";
-  position: absolute; inset: -6px;
+  position: absolute;
+  inset: -6px;
   border-radius: 999px;
   background: radial-gradient(40% 60% at 50% 50%,
-    rgba(255, 59, 212, .35), rgba(91, 225, 255, .25), transparent 70%);
+    rgba(255, 59, 212, .35),
+    rgba(91, 225, 255, .25),
+    transparent 70%);
   filter: blur(8px);
   z-index: -1;
   animation: neonSoft 2.2s infinite alternate;
@@ -49,4 +52,24 @@
   opacity: .55;
   cursor: not-allowed;
   box-shadow: none;
+}
+
+/* ==== Overrides pour la page Room : pas de néon ==== */
+.room h1,
+.room h2,
+.room h3 {
+  color: var(--text-color);
+  text-shadow: none;
+  letter-spacing: 0;
+}
+
+.title {
+  color: var(--text-color);
+  text-shadow: none;
+}
+
+/* Cadres/containers neutres sur la page Room uniquement */
+.room .card {
+  box-shadow: none;
+  border: 1px solid rgba(255, 255, 255, 0.12);
 }

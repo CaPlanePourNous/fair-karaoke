@@ -6,7 +6,7 @@ type Item = {
   id?: string | number;
   title: string;
   artist: string;
-  display_name?: string; // nom/pseudo du chanteur
+  display_name?: string;
 };
 
 type HostQueuePayload = {
@@ -24,9 +24,9 @@ export default function HostClient({ slug }: { slug: string }) {
     played: [],
   });
   const [error, setError] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false); // pour le bouton "Lire la suivante"
+  const [busy, setBusy] = useState(false);
 
-  // --- Charge la queue périodiquement (en arrière-plan) ---
+  // --- Fetch queue periodically (background) ---
   const fetchQueue = async () => {
     try {
       const r = await fetch("/api/host/queue", { cache: "no-store" });
@@ -38,7 +38,7 @@ export default function HostClient({ slug }: { slug: string }) {
         played: Array.isArray(d?.played) ? d.played : [],
       });
       setError(null);
-    } catch {
+    } catch (e: any) {
       setError("Impossible de charger la file");
     }
   };
@@ -49,7 +49,7 @@ export default function HostClient({ slug }: { slug: string }) {
     return () => clearInterval(it);
   }, []);
 
-  // --- Helpers de copie ---
+  // --- Helpers copy ---
   const copy = async (txt: string) => {
     try {
       await navigator.clipboard.writeText(txt);
@@ -64,53 +64,27 @@ export default function HostClient({ slug }: { slug: string }) {
       document.body.removeChild(ta);
     }
   };
-
   const copyTitleArtist = (it: Item) => copy(`${it.title} — ${it.artist}`);
   const copySinger = (it: Item) => copy(it.display_name ?? "");
 
-  const waitingFirstTwo = useMemo(
-    () => (data.waiting ?? []).slice(0, 2),
-    [data.waiting]
-  );
+  const waitingFirstTwo = useMemo(() => (data.waiting ?? []).slice(0, 2), [data.waiting]);
 
   // Peut passer à la suivante seulement s'il y a au moins 1 en attente
-  const canNext =
-    Array.isArray(data.waiting) && data.waiting.length > 0;
+  const canNext = Array.isArray(data.waiting) && data.waiting.length > 0;
 
-  // --- Action: Lire la suivante ---
+  // --- Action: Lire la suivante -> POST /api/host/next (gère done + start) ---
   const handleNext = async () => {
     if (busy || !canNext) return;
     setBusy(true);
     try {
-      const current = data.playing;
-      const next = data.waiting?.[0];
-      if (!next?.id) throw new Error("Aucun élément valide en file d'attente.");
-
-      // 1) Si quelque chose est en cours, on le marque 'done'
-      if (current?.id) {
-        const rDone = await fetch("/api/done", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ id: current.id }),
-        });
-        if (!rDone.ok) {
-          const d = await rDone.json().catch(() => ({}));
-          throw new Error(d?.error || "Échec de /api/done");
-        }
-      }
-
-      // 2) On bascule le premier de la file en 'playing'
-      const rPlay = await fetch("/api/host/play", {
+      const r = await fetch("/api/host/next", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ id: next.id }),
       });
-      if (!rPlay.ok) {
-        const d = await rPlay.json().catch(() => ({}));
-        throw new Error(d?.error || "Échec de /api/host/play");
+      if (!r.ok) {
+        const d = await r.json().catch(() => ({}));
+        throw new Error(d?.error || "Échec de /api/host/next");
       }
-
-      // 3) Recharge l’état (ou mets à jour localement si tu préfères)
       await fetchQueue();
     } catch (e: any) {
       setError(e?.message || "Impossible de passer à la suivante");
@@ -161,21 +135,10 @@ export default function HostClient({ slug }: { slug: string }) {
                 Chanteur·euse : <strong>{data.playing.display_name}</strong>
               </div>
             )}
-            <div
-              style={{
-                marginTop: 10,
-                display: "flex",
-                gap: 8,
-                flexWrap: "wrap",
-              }}
-            >
-              <button style={btn} onClick={() => copyTitleArtist(data.playing!)}>
-                Copier Titre+Artiste
-              </button>
+            <div style={{ marginTop: 10, display: "flex", gap: 8, flexWrap: "wrap" }}>
+              <button style={btn} onClick={() => copyTitleArtist(data.playing!)}>Copier Titre+Artiste</button>
               {data.playing.display_name && (
-                <button style={btn} onClick={() => copySinger(data.playing!)}>
-                  Copier Nom
-                </button>
+                <button style={btn} onClick={() => copySinger(data.playing!)}>Copier Nom</button>
               )}
             </div>
           </div>
@@ -185,9 +148,7 @@ export default function HostClient({ slug }: { slug: string }) {
       </section>
 
       {/* Zone bouton central : Lire la suivante */}
-      <div
-        style={{ display: "flex", justifyContent: "center", margin: "14px 0" }}
-      >
+      <div style={{ display: "flex", justifyContent: "center", margin: "14px 0" }}>
         <button
           style={btnPrimary}
           onClick={handleNext}
@@ -211,9 +172,7 @@ export default function HostClient({ slug }: { slug: string }) {
         <div style={card}>
           <h2 style={{ marginTop: 0 }}>File d’attente</h2>
           {Array.isArray(data.waiting) && data.waiting.length > 0 ? (
-            <ul
-              style={{ listStyle: "none", padding: 0, margin: "8px 0 0 0" }}
-            >
+            <ul style={{ listStyle: "none", padding: 0, margin: "8px 0 0 0" }}>
               {data.waiting.map((it, idx) => (
                 <li
                   key={(it.id ?? idx).toString()}
@@ -227,39 +186,22 @@ export default function HostClient({ slug }: { slug: string }) {
                   }}
                 >
                   <div style={{ minWidth: 0 }}>
-                    <div
-                      style={{
-                        fontWeight: 600,
-                        whiteSpace: "nowrap",
-                        overflow: "hidden",
-                        textOverflow: "ellipsis",
-                      }}
-                    >
+                    <div style={{ fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
                       {it.title} — {it.artist}
                     </div>
                     {it.display_name && (
-                      <div style={{ opacity: 0.8, fontSize: 13 }}>
-                        {it.display_name}
-                      </div>
+                      <div style={{ opacity: 0.8, fontSize: 13 }}>{it.display_name}</div>
                     )}
                   </div>
 
                   {/* Boutons de copie SEULEMENT pour les deux premiers de la file */}
                   {idx < 2 && (
                     <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                      <button
-                        style={btn}
-                        onClick={() => copyTitleArtist(it)}
-                        title="Copier Titre + Artiste"
-                      >
+                      <button style={btn} onClick={() => copyTitleArtist(it)} title="Copier Titre + Artiste">
                         Copier T+A
                       </button>
                       {it.display_name && (
-                        <button
-                          style={btn}
-                          onClick={() => copySinger(it)}
-                          title="Copier Nom"
-                        >
+                        <button style={btn} onClick={() => copySinger(it)} title="Copier Nom">
                           Copier Nom
                         </button>
                       )}
@@ -277,9 +219,7 @@ export default function HostClient({ slug }: { slug: string }) {
         <div style={card}>
           <h2 style={{ marginTop: 0 }}>Passées</h2>
           {Array.isArray(data.played) && data.played.length > 0 ? (
-            <ul
-              style={{ listStyle: "none", padding: 0, margin: "8px 0 0 0" }}
-            >
+            <ul style={{ listStyle: "none", padding: 0, margin: "8px 0 0 0" }}>
               {data.played.map((it, idx) => (
                 <li
                   key={(it.id ?? `p-${idx}`).toString()}
@@ -293,29 +233,18 @@ export default function HostClient({ slug }: { slug: string }) {
                   }}
                 >
                   <div style={{ minWidth: 0 }}>
-                    <div
-                      style={{
-                        fontWeight: 600,
-                        whiteSpace: "nowrap",
-                        overflow: "hidden",
-                        textOverflow: "ellipsis",
-                      }}
-                    >
+                    <div style={{ fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
                       {it.title} — {it.artist}
                     </div>
                     {it.display_name && (
-                      <div style={{ opacity: 0.8, fontSize: 13 }}>
-                        {it.display_name}
-                      </div>
+                      <div style={{ opacity: 0.8, fontSize: 13 }}>{it.display_name}</div>
                     )}
                   </div>
                 </li>
               ))}
             </ul>
           ) : (
-            <p style={{ marginTop: 8, opacity: 0.8 }}>
-              Aucune chanson passée pour l’instant.
-            </p>
+            <p style={{ marginTop: 8, opacity: 0.8 }}>Aucune chanson passée pour l’instant.</p>
           )}
         </div>
       </section>

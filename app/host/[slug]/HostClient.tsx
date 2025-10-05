@@ -1,4 +1,3 @@
-// app/host/[slug]/HostClient.tsx
 "use client";
 import { useEffect, useState } from "react";
 
@@ -30,19 +29,22 @@ export default function HostClient({ slug }: { slug: string }) {
       const d = await r.json();
       setData(d);
     } catch (e) {
-      console.error(e);
+      console.error("Erreur lors du chargement :", e);
     }
   }
 
   async function playNext() {
     setLoading(true);
-    await fetch("/api/host/play", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ next: true }),
-    });
-    await refresh();
-    setLoading(false);
+    try {
+      await fetch("/api/host/play", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ next: true }),
+      });
+      await refresh();
+    } finally {
+      setLoading(false);
+    }
   }
 
   useEffect(() => {
@@ -52,60 +54,19 @@ export default function HostClient({ slug }: { slug: string }) {
   }, []);
 
   return (
-    <main style={{ maxWidth: 720, margin: "30px auto", padding: "0 16px" }}>
+    <main style={{ maxWidth: 720, margin: "0 auto", padding: "16px" }}>
       <h1>🎤 File d’attente — {slug}</h1>
 
+      {/* En cours */}
       <section style={{ marginTop: 24 }}>
         <h2>En cours</h2>
         {data.playing ? (
-          <p>
+          <div
+            style={{
+              padding: "8px 12px",
+              border: "1px solid #ccc",
+              borderRadius: 6,
+              background: "#f9f9f9",
+            }}
+          >
             ▶ <strong>{data.playing.title}</strong> — {data.playing.artist}{" "}
-            ({data.playing.display_name || "?"})
-          </p>
-        ) : (
-          <p>Aucune chanson en cours.</p>
-        )}
-        <button
-          onClick={playNext}
-          disabled={loading}
-          style={{ padding: "8px 12px", marginTop: 8 }}
-        >
-          ⏭ Passer à la suivante
-        </button>
-      </section>
-
-      <section style={{ marginTop: 24 }}>
-        <h2>À venir</h2>
-        {data.waiting.length === 0 ? (
-          <p>Aucun titre en attente.</p>
-        ) : (
-          <ul>
-            {data.waiting.map((r) => (
-              <li key={r.id}>
-                {r.isNew && <span style={{ color: "green" }}>🆕 </span>}
-                <strong>{r.title}</strong> — {r.artist}{" "}
-                ({r.display_name || "?"})
-              </li>
-            ))}
-          </ul>
-        )}
-      </section>
-
-      <section style={{ marginTop: 24 }}>
-        <h2>Déjà passées</h2>
-        {data.played.length === 0 ? (
-          <p>Aucun titre terminé.</p>
-        ) : (
-          <ul>
-            {data.played.map((r) => (
-              <li key={r.id}>
-                <strong>{r.title}</strong> — {r.artist}{" "}
-                ({r.display_name || "?"})
-              </li>
-            ))}
-          </ul>
-        )}
-      </section>
-    </main>
-  );
-}

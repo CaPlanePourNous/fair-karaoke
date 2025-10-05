@@ -34,7 +34,6 @@ export default function RoomClient({ slug }: { slug: string }) {
   const [msg, setMsg] = useState<string | null>(null);
   const [won, setWon] = useState(false);
 
-  // états de chargement pour éviter les doubles clics
   const [submitLoading, setSubmitLoading] = useState(false);
   const [lotteryLoading, setLotteryLoading] = useState(false);
 
@@ -158,10 +157,8 @@ export default function RoomClient({ slug }: { slug: string }) {
   }
 
   return (
-    <main className={styles.room} style={{ maxWidth: 720, margin: "0 auto", padding: "16px" }}>
-      <h1 className={styles.title}>
-        🎤 Karaoké – {isLantignie ? "Lantignié" : slug} 🎶
-      </h1>
+    <main style={{ maxWidth: 720, margin: "0 auto", padding: "16px" }}>
+      <h1>🎤 Karaoké – {isLantignie ? "Lantignié" : slug} 🎶</h1>
 
       {stats && (
         <p style={{
@@ -246,8 +243,7 @@ export default function RoomClient({ slug }: { slug: string }) {
 
       <hr style={{ margin: '24px 0' }} />
 
-      {/* ==== Bloc Tirage au sort (préserve le look) ==== */}
-      <section className={styles.lottery}>
+      <section>
         <h2>🎁 Tirage au sort</h2>
         <p>Inscris ton nom pour participer (une inscription par personne).</p>
 

@@ -1,41 +1,53 @@
-// app/api/search/route.ts
 import { NextRequest, NextResponse } from "next/server";
-import { createServerSupabaseClient, sbServer } from "@/lib/supabaseServer";
+import fs from "fs";
+import path from "path";
+import { parse } from "csv-parse/sync";
 
-/** Récupère un client supabase, quel que soit ton helper actuel */
-function getClient() {
-  try {
-    if (typeof createServerSupabaseClient === "function") return createServerSupabaseClient();
-  } catch {}
-  // compat: certains anciens fichiers importent/exportent `sbServer` (client déjà instancié)
-  if (sbServer) return sbServer as any;
-  throw new Error("No Supabase client available from lib/supabaseServer");
+let cache: { id: string; title: string; artist: string }[] | null = null;
+
+function loadCSV() {
+  if (cache) return cache;
+
+  const csvPath = path.join(process.cwd(), "public", "karafun.csv");
+  const csv = fs.readFileSync(csvPath, "utf8");
+
+  const records = parse(csv, {
+    columns: true,
+    skip_empty_lines: true,
+    trim: true,
+  });
+
+  // Conversion propre des colonnes
+  cache = records.map((r: any) => ({
+    id: r.Id || r.id || "",
+    title: r.Title || r.title || "",
+    artist: r.Artist || r.artist || "",
+  }));
+
+  return cache;
 }
 
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
-  const q = (searchParams.get("q") || "").trim();
-  const limit = Math.min(parseInt(searchParams.get("limit") || "20", 10), 50);
+  const q = (searchParams.get("q") || "").trim().toLowerCase();
 
-  // Ancien comportement : rien si moins de 2 lettres
   if (q.length < 2) return NextResponse.json([]);
 
-  const supabase = getClient();
+  try {
+    const songs = loadCSV();
 
-  // IMPORTANT: colonnes de ta table = karafun_id, title, artist
-  const { data, error } = await supabase
-    .from("songs")
-    .select("karafun_id,title,artist")
-    .or(`title.ilike.%${q}%,artist.ilike.%${q}%`)
-    .order("title", { ascending: true })
-    .limit(limit);
+    const results = songs.filter(
+      (s) =>
+        s.title.toLowerCase().includes(q) ||
+        s.artist.toLowerCase().includes(q)
+    );
 
-  if (error) {
-    console.error("[/api/search] Supabase error:", error);
-    // On renvoie un tableau vide pour ne pas casser le client
-    return NextResponse.json([]);
+    return NextResponse.json(results.slice(0, 20));
+  } catch (err: any) {
+    console.error("[api/search] CSV read error:", err);
+    return NextResponse.json(
+      { error: "CSV read error" },
+      { status: 500 }
+    );
   }
-
-  // Le client Room attend un **tableau** direct
-  return NextResponse.json(Array.isArray(data) ? data : []);
 }

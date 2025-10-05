@@ -1,233 +1,198 @@
-// app/host/[slug]/HostClient.tsx
-"use client";
-import { useEffect, useState } from "react";
+'use client';
+
+import { useCallback, useEffect, useMemo, useState } from 'react';
 
 type Req = {
   id: string;
+  room_id: string;
+  singer_id?: string | null;
   title: string;
   artist: string;
-  display_name: string | null;
-  isNew?: boolean;
+  status: 'waiting'|'playing'|'done'|'rejected';
+  created_at: string;
+  // display_name possible si tu utilises la vue requests_with_singer
+  display_name?: string | null;
 };
 
-type QueueData = {
+type QueuePayload = {
+  ok: boolean;
+  error?: string;
   playing: Req | null;
   waiting: Req[];
-  played: Req[];
+  done: Req[];
 };
 
-export default function HostClient({ slug }: { slug: string }) {
-  const [data, setData] = useState<QueueData>({
-    playing: null,
-    waiting: [],
-    played: [],
-  });
-  const [loadingNext, setLoadingNext] = useState(false);
+const safeArr = (v: any) => (Array.isArray(v) ? v : []);
 
-  // ---- Chargement file d'attente ----
-  async function refresh() {
-    try {
-      const r = await fetch("/api/host/queue", { cache: "no-store" });
-      const text = await r.text();
-      try {
-        const d = JSON.parse(text) as QueueData;
-        setData(d);
-      } catch {
-        console.warn(`[${label}] /api/host/queue non-JSON:`, text);
-      }
-    } catch (e) {
-      console.error(`[${label}] /api/host/queue error:`, e);
-    }
-  }
-
-  // ---- Passer à la suivante ----
-  async function playNext() {
-    if (loading) return;
-    setLoading(true);
-    try {
-      const r = await fetch("/api/host/play", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ next: true }),
-      });
-      if (!r.ok) {
-        const d = await r.json().catch(() => ({}));
-        throw new Error(d?.error || "Erreur /api/host/play");
-      }
-      await refresh();
-    } catch (err) {
-      console.error(err);
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  // ---- Copier dans le presse-papiers ----
-  function copyText(txt: string) {
-    navigator.clipboard.writeText(txt).catch(() =>
-      alert("Impossible de copier le texte.")
-    );
-  }
-
-  // ---- Rafraîchissement auto ----
-  useEffect(() => {
-    refresh("on-mount");
-    const it = setInterval(() => refresh("interval"), 5000);
-    return () => clearInterval(it);
-  }, []);
-
+function CopyBtn({ text, label }: { text: string; label: string }) {
+  const [ok, setOk] = useState(false);
   return (
-    <main
-      style={{
-        maxWidth: 1200,
-        margin: "0 auto",
-        padding: "16px",
-        display: "grid",
-        gridTemplateColumns: "1fr 1fr",
-        gridTemplateRows: "auto 1fr",
-        gap: "16px",
+    <button
+      onClick={async () => {
+        try { await navigator.clipboard.writeText(text); setOk(true); setTimeout(()=>setOk(false),1200); } catch {}
       }}
+      className="px-2 py-1 border rounded text-sm"
+      title={text}
     >
-      {/* === En cours === */}
-      <section
-        style={{
-          gridColumn: "1 / span 2",
-          background: "#f9f9f9",
-          padding: "16px",
-          borderRadius: 8,
-          border: "1px solid #ddd",
-        }}
-      >
-        <h2 style={{ marginBottom: 12 }}>🎤 En cours</h2>
-        {data?.playing ? (
-          <>
-            <p style={{ fontSize: "1.2em", marginBottom: 12 }}>
-              ▶ <strong>{data.playing.title}</strong> — {data.playing.artist}{" "}
-              ({data.playing.display_name || "?"})
-            </p>
-            <button
-              onClick={playNext}
-              disabled={loading}
-              style={{
-                padding: "8px 12px",
-                cursor: loading ? "wait" : "pointer",
-                opacity: loading ? 0.6 : 1,
-              }}
-            >
-              ⏭ Lire la suivante
-            </button>
-          </>
+      {ok ? 'Copié' : label}
+    </button>
+  );
+}
+
+export default function HostClient({ roomId }: { roomId: string }) {
+  const [data, setData] = useState<QueuePayload>({ ok: true, playing: null, waiting: [], done: [] });
+  const [loading, setLoading] = useState(false);
+  const [playLoading, setPlayLoading] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  const fetchQueue = useCallback(async () => {
+    try {
+      // même si la route n’en a pas besoin, on passe le room_id pour clarté
+      const r = await fetch(`/api/host/queue?room_id=${encodeURIComponent(roomId)}`, { cache: 'no-store' });
+      let j: any = {};
+      try { j = await r.json(); } catch {}
+      if (!r.ok) throw new Error(j?.error || `HTTP ${r.status}`);
+      setData({
+        ok: true,
+        playing: j?.playing ?? null,
+        waiting: safeArr(j?.waiting),
+        done: safeArr(j?.done),
+      });
+      setErr(null);
+    } catch (e: any) {
+      setErr(String(e?.message || e));
+      setData(d => ({ ...d, ok: false })); // on garde l’affichage, pas de crash
+    }
+  }, [roomId]);
+
+  useEffect(() => {
+    setLoading(true);
+    fetchQueue().finally(() => setLoading(false));
+    const it = setInterval(fetchQueue, 5000);
+    return () => clearInterval(it);
+  }, [fetchQueue]);
+
+  const canPlayNext = useMemo(() => (data.waiting?.length ?? 0) > 0, [data.waiting]);
+
+  async function playNext() {
+    if (playLoading) return;
+    setPlayLoading(true);
+    try {
+      const r = await fetch('/api/host/play', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ room_id: roomId }),
+      });
+      let j: any = {};
+      try { j = await r.json(); } catch {}
+      if (!r.ok) throw new Error(j?.error || `HTTP ${r.status}`);
+      // refetch pour afficher l’état à jour
+      await fetchQueue();
+    } catch (e: any) {
+      setErr(String(e?.message || e));
+    } finally {
+      setPlayLoading(false);
+    }
+  }
+
+  // rendu “3 zones”
+  return (
+    <main className="max-w-6xl mx-auto p-4">
+      <header className="mb-3 flex items-center justify-between gap-3">
+        <h1 className="text-xl font-semibold">🎛️ Host · Room {roomId}</h1>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={playNext}
+            disabled={!canPlayNext || playLoading}
+            className={`px-3 py-2 rounded text-white ${(!canPlayNext || playLoading) ? 'bg-gray-400' : 'bg-blue-600 hover:bg-blue-700'}`}
+            title={canPlayNext ? 'Lire la suivante' : 'Aucune chanson en attente'}
+          >
+            ⏭ Lire la suivante
+          </button>
+          <button
+            onClick={() => fetchQueue()}
+            disabled={loading}
+            className="px-3 py-2 rounded border"
+            title="Rafraîchir maintenant"
+          >
+            ↻
+          </button>
+        </div>
+      </header>
+
+      {err && (
+        <div className="mb-3 p-2 border border-red-400 text-red-700 rounded">
+          ⚠️ API: {err} — l’interface reste fonctionnelle, nouvel essai automatique en cours…
+        </div>
+      )}
+
+      <section className="mb-4 p-3 rounded border">
+        <h2 className="font-semibold mb-2">🎶 En cours</h2>
+        {data.playing ? (
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <div className="text-lg font-medium">{data.playing.title}</div>
+              <div className="text-sm text-gray-600">{data.playing.artist}</div>
+              {!!data.playing.display_name && (
+                <div className="text-sm mt-1">👤 {data.playing.display_name}</div>
+              )}
+            </div>
+            <div className="flex gap-2">
+              <CopyBtn text={`${data.playing.title} — ${data.playing.artist}`} label="Copier titre+artiste" />
+              <CopyBtn text={data.playing.title} label="Copier titre" />
+              <CopyBtn text={data.playing.artist} label="Copier artiste" />
+            </div>
+          </div>
         ) : (
-          <p>Aucun titre en cours.</p>
+          <div className="text-gray-600">Aucune chanson en cours.</div>
         )}
       </section>
 
-      {/* === À venir === */}
-      <section
-        style={{
-          background: "#f6f6f6",
-          padding: "16px",
-          borderRadius: 8,
-          border: "1px solid #ddd",
-        }}
-      >
-        <h2>📋 File d’attente</h2>
-        {data.waiting.length === 0 ? (
-          <p>Aucun titre en attente.</p>
-        ) : (
-          <ul style={{ paddingLeft: 0, listStyle: "none" }}>
-            {data.waiting.map((r) => (
-              <li
-                key={r.id}
-                style={{
-                  marginBottom: 8,
-                  background: "#fff",
-                  border: "1px solid #ccc",
-                  borderRadius: 6,
-                  padding: "6px 8px",
-                  display: "flex",
-                  justifyContent: "space-between",
-                  alignItems: "center",
-                }}
-              >
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        {/* file d’attente */}
+        <section className="p-3 rounded border">
+          <h2 className="font-semibold mb-2">🕒 File d’attente ({data.waiting?.length ?? 0})</h2>
+          <ol className="space-y-2">
+            {safeArr(data.waiting).map((r: Req, idx: number) => (
+              <li key={r.id} className="flex items-center justify-between gap-3 border rounded p-2">
                 <div>
-                  <strong>{r.title}</strong> — {r.artist}{" "}
-                  <span style={{ opacity: 0.7 }}>
-                    ({r.display_name || "?"})
-                  </span>
+                  <div className="font-medium">{idx + 1}. {r.title}</div>
+                  <div className="text-sm text-gray-600">{r.artist}</div>
+                  {!!r.display_name && <div className="text-sm">👤 {r.display_name}</div>}
                 </div>
-                <div style={{ display: "flex", gap: 6 }}>
-                  <button
-                    onClick={() =>
-                      copyText(`${r.title} — ${r.artist}`)
-                    }
-                    title="Copier le titre + artiste"
-                    style={{
-                      padding: "4px 6px",
-                      border: "1px solid #ccc",
-                      borderRadius: 4,
-                      cursor: "pointer",
-                      background: "#fafafa",
-                    }}
-                  >
-                    🎵
-                  </button>
-                  <button
-                    onClick={() =>
-                      copyText(r.display_name || "")
-                    }
-                    title="Copier le nom du chanteur"
-                    style={{
-                      padding: "4px 6px",
-                      border: "1px solid #ccc",
-                      borderRadius: 4,
-                      cursor: "pointer",
-                      background: "#fafafa",
-                    }}
-                  >
-                    👤
-                  </button>
-                </div>
+                {/* copier sur les 2 premiers comme tu le faisais */}
+                {idx < 2 && (
+                  <div className="flex gap-2">
+                    <CopyBtn text={`${r.title} — ${r.artist}`} label="Copier titre+artiste" />
+                    <CopyBtn text={r.title} label="Copier titre" />
+                    <CopyBtn text={r.artist} label="Copier artiste" />
+                  </div>
+                )}
               </li>
             ))}
-          </ul>
-        )}
-      </section>
+            {(!data.waiting || data.waiting.length === 0) && (
+              <li className="text-gray-600">Rien en attente.</li>
+            )}
+          </ol>
+        </section>
 
-      {/* === Déjà passées === */}
-      <section
-        style={{
-          background: "#f6f6f6",
-          padding: "16px",
-          borderRadius: 8,
-          border: "1px solid #ddd",
-        }}
-      >
-        <h2>✅ Déjà passées</h2>
-        {data.played.length === 0 ? (
-          <p>Aucun titre terminé.</p>
-        ) : (
-          <ul style={{ listStyle: "none", paddingLeft: 0, margin: 0 }}>
-            {data.played.map((r) => (
-              <li
-                key={r.id}
-                style={{
-                  marginBottom: 8,
-                  background: "#fff",
-                  border: "1px solid #ccc",
-                  borderRadius: 6,
-                  padding: "6px 8px",
-                }}
-              >
-                <strong>{r.title}</strong> — {r.artist}{" "}
-                <span style={{ opacity: 0.7 }}>
-                  ({r.display_name || "?"})
-                </span>
+        {/* déjà passées */}
+        <section className="p-3 rounded border">
+          <h2 className="font-semibold mb-2">✅ Déjà passées</h2>
+          <ol className="space-y-2 max-h-[60vh] overflow-auto pr-1">
+            {safeArr(data.done).map((r: Req) => (
+              <li key={r.id} className="border rounded p-2">
+                <div className="font-medium">{r.title}</div>
+                <div className="text-sm text-gray-600">{r.artist}</div>
+                {!!r.display_name && <div className="text-sm">👤 {r.display_name}</div>}
               </li>
             ))}
-          </ul>
-        )}
-      </section>
+            {(!data.done || data.done.length === 0) && (
+              <li className="text-gray-600">Aucune pour l’instant.</li>
+            )}
+          </ol>
+        </section>
+      </div>
     </main>
   );
 }

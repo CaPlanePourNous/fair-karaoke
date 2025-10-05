@@ -1,64 +1,49 @@
+// app/api/host/queue/route.ts
 import { NextResponse } from "next/server";
-import { createClient } from "@supabase/supabase-js";
-import { computeOrdering, type RequestRow } from "@/lib/ordering";
+import { sbServer } from "@/lib/supabaseServer";
+import { computeOrdering } from "@/lib/ordering";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-function getSupabase() {
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const key =
-    process.env.SUPABASE_SERVICE_ROLE_KEY ??
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-  if (!url) throw new Error("ENV missing: NEXT_PUBLIC_SUPABASE_URL");
-  if (!key)
-    throw new Error(
-      "ENV missing: SUPABASE_SERVICE_ROLE_KEY (prefer) or NEXT_PUBLIC_SUPABASE_ANON_KEY"
-    );
-  return createClient(url, key, { auth: { persistSession: false } });
-}
-
 export async function GET() {
-  const db = getSupabase();
   try {
-    const { data, error } = await db
+    // 1. Récupère toutes les demandes de la room
+    const { data, error } = await sbServer
       .from("requests")
-      .select("id,singer,title,artist,status,created_at")
-      .in("status", ["waiting", "playing", "done"])
+      .select(
+        "id, room_id, singer_id, title, artist, ip, status, created_at"
+      )
       .order("created_at", { ascending: true });
 
     if (error) throw error;
+    if (!data) return NextResponse.json({ ok: true, playing: null, waiting: [], done: [] });
 
-    const reqs = (data ?? []) as RequestRow[];
-    const playing = reqs.find((r) => r.status === "playing") || null;
-    const done = reqs.filter((r) => r.status === "done");
+    // 2. Sépare les statuts
+    const playing = data.find((r) => r.status === "playing") ?? null;
+    const done = data.filter((r) => r.status === "done");
+    const waitingRaw = data.filter((r) => r.status === "waiting");
 
-    const ord = computeOrdering({
-      requests: reqs,
-      alreadyPlayed: done.map((d) => ({ title: d.title, artist: d.artist })),
-      maxQueue: 15,
-    });
+    // 3. Applique la logique d’ordre sur les waiting
+    const ordering = computeOrdering([...data]);
 
-    const waitingOrdered = ord.orderedWaiting
-      .map((id) => reqs.find((r) => r.id === id))
-      .filter(Boolean) as RequestRow[];
-
-    const recentDone = done
+    const waiting = waitingRaw
+      .filter((r) => ordering.orderedWaiting.includes(r.id))
       .sort(
         (a, b) =>
-          new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
-      )
-      .slice(0, 20);
+          ordering.orderedWaiting.indexOf(a.id) -
+          ordering.orderedWaiting.indexOf(b.id)
+      );
 
     return NextResponse.json({
       ok: true,
       playing,
-      waiting: waitingOrdered,
-      done: recentDone,
+      waiting,
+      done,
     });
   } catch (e: unknown) {
-    console.error("Erreur /api/host/queue :", e);
     const msg = e instanceof Error ? e.message : String(e);
+    console.error("Erreur /api/host/queue:", msg);
     return NextResponse.json({ ok: false, error: msg }, { status: 500 });
   }
 }

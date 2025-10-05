@@ -24,7 +24,7 @@ export default function HostClient({ slug }: { slug: string }) {
   });
   const [loading, setLoading] = useState(false);
 
-  // ---- Chargement file d'attente ----
+  // ---- Rafraîchit les données ----
   async function refresh() {
     try {
       const r = await fetch("/api/host/queue");
@@ -35,7 +35,7 @@ export default function HostClient({ slug }: { slug: string }) {
     }
   }
 
-  // ---- Passer à la suivante ----
+  // ---- Passe à la suivante ----
   async function playNext() {
     if (loading) return;
     setLoading(true);
@@ -57,14 +57,14 @@ export default function HostClient({ slug }: { slug: string }) {
     }
   }
 
-  // ---- Copier dans le presse-papiers ----
+  // ---- Copie texte ----
   function copyText(txt: string) {
-    navigator.clipboard.writeText(txt).catch(() =>
-      alert("Impossible de copier le texte.")
-    );
+    navigator.clipboard
+      .writeText(txt)
+      .catch(() => alert("Impossible de copier le texte."));
   }
 
-  // ---- Rafraîchissement auto ----
+  // ---- Rafraîchissement automatique ----
   useEffect(() => {
     refresh();
     const it = setInterval(refresh, 5000);
@@ -100,24 +100,27 @@ export default function HostClient({ slug }: { slug: string }) {
               ▶ <strong>{data.playing.title}</strong> — {data.playing.artist}{" "}
               ({data.playing.display_name || "?"})
             </p>
-            <button
-              onClick={playNext}
-              disabled={loading}
-              style={{
-                padding: "8px 12px",
-                cursor: loading ? "wait" : "pointer",
-                opacity: loading ? 0.6 : 1,
-              }}
-            >
-              ⏭ Lire la suivante
-            </button>
           </>
         ) : (
           <p>Aucun titre en cours.</p>
         )}
+
+        {/* Bouton toujours visible */}
+        <button
+          onClick={playNext}
+          disabled={loading}
+          style={{
+            padding: "8px 12px",
+            marginTop: 8,
+            cursor: loading ? "wait" : "pointer",
+            opacity: loading ? 0.6 : 1,
+          }}
+        >
+          ⏭ Lire la suivante
+        </button>
       </section>
 
-      {/* === À venir === */}
+      {/* === File d’attente === */}
       <section
         style={{
           background: "#f6f6f6",
@@ -153,9 +156,7 @@ export default function HostClient({ slug }: { slug: string }) {
                 </div>
                 <div style={{ display: "flex", gap: 6 }}>
                   <button
-                    onClick={() =>
-                      copyText(`${r.title} — ${r.artist}`)
-                    }
+                    onClick={() => copyText(`${r.title} — ${r.artist}`)}
                     title="Copier le titre + artiste"
                     style={{
                       padding: "4px 6px",
@@ -168,9 +169,7 @@ export default function HostClient({ slug }: { slug: string }) {
                     🎵
                   </button>
                   <button
-                    onClick={() =>
-                      copyText(r.display_name || "")
-                    }
+                    onClick={() => copyText(r.display_name || "")}
                     title="Copier le nom du chanteur"
                     style={{
                       padding: "4px 6px",

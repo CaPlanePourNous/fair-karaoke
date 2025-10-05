@@ -69,4 +69,5 @@ export default function HostClient({ slug }: { slug: string }) {
               background: "#f9f9f9",
             }}
           >
-            ▶ <strong>{data.playing.title}</strong> — {data.playing.artist}{" "}
+            {"▶"} <strong>{data.playing.title}</strong> — {data.playing.artist}{" "}
+

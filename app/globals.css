@@ -1,0 +1,145 @@
+/* --- RESET DE BASE --- */
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html, body {
+  height: 100%;
+  scroll-behavior: smooth;
+}
+
+body {
+  font-family: var(--font-geist-sans, system-ui, sans-serif);
+  font-size: 16px;
+  line-height: 1.5;
+  color: var(--text-color, #222);
+  background: var(--background-color, #fff);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+/* --- VARIABLES GLOBALES --- */
+:root {
+  --accent-color: #ff3bd4;
+  --accent-color-alt: #5be1ff;
+  --background-color: #fff;
+  --text-color: #111;
+  --border-color: rgba(0,0,0,0.1);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --background-color: #0f0f0f;
+    --text-color: #f2f2f2;
+    --border-color: rgba(255,255,255,0.15);
+  }
+}
+
+/* --- ÉLÉMENTS DE TEXTE --- */
+h1, h2, h3, h4, h5, h6 {
+  font-weight: 600;
+  margin-bottom: 12px;
+  line-height: 1.2;
+}
+
+h1 {
+  font-size: 1.8rem;
+  text-align: center;
+}
+
+h2 {
+  font-size: 1.3rem;
+  margin-top: 24px;
+}
+
+p {
+  margin-bottom: 12px;
+}
+
+/* --- LIENS --- */
+a {
+  color: var(--accent-color);
+  text-decoration: none;
+}
+a:hover {
+  text-decoration: underline;
+}
+
+/* --- FORMULAIRES --- */
+input, button, select, textarea {
+  font: inherit;
+  color: inherit;
+}
+
+input, textarea, select {
+  width: 100%;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  padding: 8px;
+  background: transparent;
+}
+
+input:focus, textarea:focus, select:focus {
+  outline: 2px solid var(--accent-color-alt);
+  border-color: var(--accent-color-alt);
+}
+
+/* --- BOUTONS --- */
+button {
+  border: none;
+  border-radius: 6px;
+  padding: 10px 16px;
+  cursor: pointer;
+  font-weight: 600;
+  background: var(--accent-color);
+  color: #fff;
+  transition: background 0.2s, transform 0.1s;
+}
+
+button:hover {
+  background: var(--accent-color-alt);
+  transform: translateY(-1px);
+}
+
+button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+/* --- LAYOUTS --- */
+main {
+  max-width: 960px;
+  margin: 0 auto;
+  padding: 16px;
+}
+
+/* --- LISTES --- */
+ul {
+  list-style: none;
+  padding-left: 0;
+}
+li {
+  margin-bottom: 6px;
+}
+
+/* --- UTILITAIRES SIMPLES --- */
+.card {
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  padding: 12px;
+  background: rgba(0,0,0,0.02);
+}
+@media (prefers-color-scheme: dark) {
+  .card {
+    background: rgba(255,255,255,0.03);
+  }
+}
+
+/* --- ACCESSIBILITÉ --- */
+[aria-live] {
+  min-height: 1.2em; /* empêche le saut de mise en page */
+}

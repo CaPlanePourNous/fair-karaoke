@@ -1,6 +1,6 @@
 // app/host/[slug]/HostClient.tsx
 "use client";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 type Req = {
   id: string;
@@ -24,70 +24,38 @@ export default function HostClient({ slug }: { slug: string }) {
   });
   const [loading, setLoading] = useState(false);
 
-  // ---- Rafraîchissement principal ----
-  async function refresh() {
-    try {
-      const r = await fetch("/api/host/queue", { cache: "no-store" });
-      if (!r.ok) throw new Error("HTTP " + r.status);
-      const d = (await r.json()) as QueueData;
-      setData(d);
-    } catch (e) {
-      console.error("Erreur refresh():", e);
+  // Anti-course entre l’action et le polling
+  const pausePollingUntil = useRef<number>(0);
+
+  // ---- Rafraîchissement principal (avec pause temporaire) ----
+  async function refresh(label: string = "refresh") {
+    // Ne pas poller si on est dans la fenêtre de pause
+    if (Date.now() < pausePollingUntil.current) {
+      // console.debug(`[${label}] polling paused`);
+      return;
     }
-  }
-
-  // ---- Fonction de passage à la suivante ----
-  async function playNext() {
-    if (loading) return;
-    setLoading(true);
-
-    // Mise à jour locale optimiste pour retour visuel immédiat
-    setData((prev) => {
-      const next = prev.waiting[0];
-      if (!next) return prev;
-      const playedNow = prev.playing ? [prev.playing, ...prev.played] : prev.played;
-      return {
-        playing: next,
-        waiting: prev.waiting.slice(1),
-        played: playedNow,
-      };
-    });
-
     try {
-      // 1) tentative "canonique" : POST /api/host/next
-      let resp = await fetch("/api/host/next", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-      });
-
-      // 2) fallback si non dispo / non 2xx : POST /api/host/play { next:true, slug }
-      if (!resp.ok) {
-        const body1 = await resp.text();
-        console.log("[/api/host/next] status:", resp.status, "body:", body1);
-
-        resp = await fetch("/api/host/play", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ next: true, slug }),
+      const url = "/api/host/queue";
+      // Logs côté client
+      console.log(`[${label}] GET ${url}`);
+      const r = await fetch(url, { cache: "no-store" });
+      const text = await r.text();
+      console.log(`[${label}] GET ${url} -> status:`, r.status);
+      // Essayons de parser JSON, sinon on logue le texte
+      try {
+        const d = JSON.parse(text) as QueueData;
+        setData(d);
+        // Debug lisible
+        console.log(`[${label}] queue:`, {
+          playing: d?.playing?.id ? `${d.playing.title} — ${d.playing.artist}` : null,
+          waiting: d?.waiting?.length,
+          played: d?.played?.length,
         });
-
-        const body2 = await resp.text();
-        console.log("[/api/host/play] status:", resp.status, "body:", body2);
-
-        if (!resp.ok) {
-          // si les deux échouent, avertir et recoller à l’état réel serveur
-          alert("Impossible de lancer la suivante.");
-        }
+      } catch (e) {
+        console.warn(`[${label}] Non-JSON response from /api/host/queue:`, text);
       }
-
-      // resynchronisation serveur (si l’API a fait plus/moins que prévu)
-      await refresh();
-    } catch (err) {
-      console.error("playNext() network error:", err);
-      alert("Erreur réseau ou API indisponible.");
-      await refresh();
-    } finally {
-      setLoading(false);
+    } catch (e) {
+      console.error(`[${label}] /api/host/queue error:`, e);
     }
   }
 
@@ -98,10 +66,65 @@ export default function HostClient({ slug }: { slug: string }) {
       .catch(() => alert("Impossible de copier le texte."));
   }
 
-  // ---- Rafraîchissement auto ----
+  // ---- Passer à la suivante (avec logging + anti-polling) ----
+  async function playNext() {
+    if (loading) return;
+    setLoading(true);
+
+    // Pause le polling 2 secondes pour éviter l’effet “passe 1s puis revient”
+    pausePollingUntil.current = Date.now() + 2000;
+
+    try {
+      // 1) Essai canonique : /api/host/next
+      const url1 = "/api/host/next";
+      console.log(`[playNext] POST ${url1}`);
+      let resp = await fetch(url1, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+      });
+      let body1 = await resp.text();
+      console.log(`[playNext] ${url1} -> status:`, resp.status);
+      console.log(`[playNext] ${url1} -> body:`, body1);
+
+      // 2) Fallback si /next échoue
+      if (!resp.ok) {
+        const url2 = "/api/host/play";
+        const payload = { next: true, slug };
+        console.log(`[playNext] FALLBACK POST ${url2}`, payload);
+        resp = await fetch(url2, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+        const body2 = await resp.text();
+        console.log(`[playNext] ${url2} -> status:`, resp.status);
+        console.log(`[playNext] ${url2} -> body:`, body2);
+
+        if (!resp.ok) {
+          alert("Impossible de lancer la suivante (next/play en échec). Voir console.");
+        }
+      }
+
+      // 3) On force un refresh serveur après l’action
+      await refresh("after-playNext");
+
+    } catch (err) {
+      console.error("[playNext] network/API error:", err);
+      alert("Erreur réseau ou API indisponible.");
+      await refresh("after-error");
+    } finally {
+      setLoading(false);
+      // On prolonge un peu la pause pour laisser passer un éventuel trigger DB
+      pausePollingUntil.current = Date.now() + 1000;
+      // Et on re-poll explicitement une fois juste après
+      setTimeout(() => refresh("post-timeout"), 1200);
+    }
+  }
+
+  // ---- Polling auto (toutes les 5s) ----
   useEffect(() => {
-    refresh();
-    const it = setInterval(refresh, 5000);
+    refresh("on-mount");
+    const it = setInterval(() => refresh("interval"), 5000);
     return () => clearInterval(it);
   }, []);
 
@@ -142,13 +165,15 @@ export default function HostClient({ slug }: { slug: string }) {
           style={{
             padding: "8px 12px",
             marginTop: 8,
-            cursor: "pointer",
+            cursor: loading ? "wait" : "pointer",
             background: "#f0f0f0",
             border: "1px solid #ccc",
             borderRadius: 6,
+            opacity: loading ? 0.7 : 1,
           }}
+          title="Marque la chanson en cours comme terminée et lance la suivante"
         >
-          ⏭ Lire la suivante
+          {loading ? "⏳ ..." : "⏭ Lire la suivante"}
         </button>
       </section>
 
@@ -166,7 +191,7 @@ export default function HostClient({ slug }: { slug: string }) {
           <p>Aucun titre en attente.</p>
         ) : (
           <ul style={{ paddingLeft: 0, listStyle: "none" }}>
-            {data.waiting.map((r) => (
+            {data.waiting.map((r, idx) => (
               <li
                 key={r.id}
                 style={{
@@ -186,34 +211,37 @@ export default function HostClient({ slug }: { slug: string }) {
                     ({r.display_name || "?"})
                   </span>
                 </div>
-                <div style={{ display: "flex", gap: 6 }}>
-                  <button
-                    onClick={() => copyText(`${r.title} — ${r.artist}`)}
-                    title="Copier le titre + artiste"
-                    style={{
-                      padding: "4px 6px",
-                      border: "1px solid #ccc",
-                      borderRadius: 4,
-                      cursor: "pointer",
-                      background: "#fafafa",
-                    }}
-                  >
-                    🎵
-                  </button>
-                  <button
-                    onClick={() => copyText(r.display_name || "")}
-                    title="Copier le nom du chanteur"
-                    style={{
-                      padding: "4px 6px",
-                      border: "1px solid #ccc",
-                      borderRadius: 4,
-                      cursor: "pointer",
-                      background: "#fafafa",
-                    }}
-                  >
-                    👤
-                  </button>
-                </div>
+                {/* boutons de copie pour les 2 premiers en file */}
+                {idx < 2 && (
+                  <div style={{ display: "flex", gap: 6 }}>
+                    <button
+                      onClick={() => copyText(`${r.title} — ${r.artist}`)}
+                      title="Copier le titre + artiste"
+                      style={{
+                        padding: "4px 6px",
+                        border: "1px solid #ccc",
+                        borderRadius: 4,
+                        cursor: "pointer",
+                        background: "#fafafa",
+                      }}
+                    >
+                      🎵
+                    </button>
+                    <button
+                      onClick={() => copyText(r.display_name || "")}
+                      title="Copier le nom du chanteur"
+                      style={{
+                        padding: "4px 6px",
+                        border: "1px solid #ccc",
+                        borderRadius: 4,
+                        cursor: "pointer",
+                        background: "#fafafa",
+                      }}
+                    >
+                      👤
+                    </button>
+                  </div>
+                )}
               </li>
             ))}
           </ul>

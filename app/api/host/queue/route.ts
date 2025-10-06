@@ -58,33 +58,41 @@ export async function GET(req: NextRequest) {
       roomId = room.id as string;
     }
 
-    // Récupérer l’état
-    const { data: playingRow } = await db
+    // --- playing (le plus récent)
+    let qPlaying = db
       .from("requests")
       .select("id, room_id, singer_id, singer, title, artist, status, created_at, updated_at, played_at")
       .eq("status", "playing")
-      .if(!!roomId, (q) => q.eq("room_id", roomId!))
       .order("updated_at", { ascending: false, nullsFirst: false })
-      .limit(1)
-      .maybeSingle();
+      .limit(1);
+    if (roomId) qPlaying = qPlaying.eq("room_id", roomId);
+    const { data: playingRow } = await qPlaying.maybeSingle();
 
-    const { data: waitingRows, error: eWait } = await db
+    // --- waiting (ancienneté croissante)
+    let qWaiting = db
       .from("requests")
       .select("id, room_id, singer_id, singer, title, artist, status, created_at, updated_at, played_at")
       .eq("status", "waiting")
-      .if(!!roomId, (q) => q.eq("room_id", roomId!))
       .order("created_at", { ascending: true })
       .limit(200);
-    if (eWait) return NextResponse.json({ ok: false, error: eWait.message }, { status: 500, headers: noStore });
+    if (roomId) qWaiting = qWaiting.eq("room_id", roomId);
+    const { data: waitingRows, error: eWait } = await qWaiting;
+    if (eWait) {
+      return NextResponse.json({ ok: false, error: eWait.message }, { status: 500, headers: noStore });
+    }
 
-    const { data: doneRows, error: eDone } = await db
+    // --- done (historique pour R2/R5)
+    let qDone = db
       .from("requests")
       .select("id, room_id, singer_id, singer, title, artist, status, created_at, updated_at, played_at")
       .eq("status", "done")
-      .if(!!roomId, (q) => q.eq("room_id", roomId!))
       .order("played_at", { ascending: false, nullsFirst: false })
       .limit(200);
-    if (eDone) return NextResponse.json({ ok: false, error: eDone.message }, { status: 500, headers: noStore });
+    if (roomId) qDone = qDone.eq("room_id", roomId);
+    const { data: doneRows, error: eDone } = await qDone;
+    if (eDone) {
+      return NextResponse.json({ ok: false, error: eDone.message }, { status: 500, headers: noStore });
+    }
 
     // Ordonnancement R1–R5
     const ordering = computeOrdering({
@@ -97,7 +105,7 @@ export async function GET(req: NextRequest) {
     const waiting = ordering.orderedWaiting.map((r) => mapRow(r as Row));
     const played = (doneRows ?? []).map((r) => mapRow(r as Row));
 
-    // Compat HostClient: on renvoie played[] (et on ajoute done[] en bonus)
+    // Compat HostClient: renvoie played[] (et done[] en bonus)
     return NextResponse.json(
       { ok: true, playing, waiting, played, done: played, reasons: ordering.reasons },
       { headers: noStore }

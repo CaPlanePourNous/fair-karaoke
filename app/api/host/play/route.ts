@@ -76,13 +76,24 @@ export async function POST(req: NextRequest) {
       if (eRows) return NextResponse.json({ ok: false, error: eRows.message }, { status: 500, headers: noStore });
 
       const all = (rows || []) as Row[];
-      // 🔧 computeOrdering ne prend qu'un seul argument dans ta version actuelle
       const { orderedWaiting } = computeOrdering(all as any);
-      id = orderedWaiting[0];
-      if (!id) return NextResponse.json({ ok: false, error: "Aucun titre en attente" }, { status: 409, headers: noStore });
+
+      const first = orderedWaiting?.[0] as unknown;
+      const nextId =
+        typeof first === "string"
+          ? first
+          : (first as { id?: string } | null | undefined)?.id;
+
+      if (!nextId) {
+        return NextResponse.json(
+          { ok: false, error: "Aucun titre en attente" },
+          { status: 409, headers: noStore }
+        );
+      }
+      id = nextId;
     }
 
-    // Nettoyer tout playing pour la room (évite l’unicité qui pète)
+    // Nettoyer tout "playing" pour la room avant de promouvoir
     if (!room_id) {
       const { data: reqRow2 } = await db.from("requests").select("room_id").eq("id", id!).maybeSingle();
       room_id = reqRow2?.room_id as string | undefined;

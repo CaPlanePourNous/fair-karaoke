@@ -1,28 +1,4 @@
-// app/api/host/queue/route.ts
-import { NextRequest, NextResponse } from "next/server";
-import { createAdminSupabaseClient } from "@/lib/supabaseServer";
-import { computeOrdering } from "@/lib/ordering";
-
-export const runtime = "nodejs";
-export const dynamic = "force-dynamic";
-
-const noStore = {
-  "Cache-Control": "no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0, s-maxage=0",
-};
-
-type Row = {
-  id: string;
-  room_id: string;
-  singer_id: string | null;
-  singer: string | null; // legacy
-  title: string;
-  artist: string;
-  status: "waiting" | "playing" | "done" | "rejected";
-  created_at: string;
-  updated_at: string | null;
-  played_at: string | null;
-  ip: string | null;
-};
+// ...imports/consts/types identiques à ta version précédente...
 
 export async function GET(req: NextRequest) {
   try {
@@ -31,7 +7,6 @@ export async function GET(req: NextRequest) {
     const roomSlug = searchParams.get("room_slug") || "lantignie";
     let room_id = searchParams.get("room_id") || "";
 
-    // Résoudre room_id si besoin
     if (!room_id) {
       const { data: r, error: eRoom } = await db.from("rooms").select("id").eq("slug", roomSlug).maybeSingle();
       if (eRoom) return NextResponse.json({ ok: false, error: eRoom.message }, { status: 500, headers: noStore });
@@ -39,7 +14,6 @@ export async function GET(req: NextRequest) {
       room_id = r.id as string;
     }
 
-    // Charger toutes les requêtes de la room (ordre brut)
     const { data: rows, error: eReq } = await db
       .from("requests")
       .select("id, room_id, singer_id, singer, title, artist, status, created_at, updated_at, played_at, ip")
@@ -49,13 +23,13 @@ export async function GET(req: NextRequest) {
     if (eReq) return NextResponse.json({ ok: false, error: eReq.message }, { status: 500, headers: noStore });
 
     const all = (rows || []) as Row[];
-
-    // Appliquer l’algorithme R1–R5 (+ anti-spam IP) — ta version de computeOrdering ne prend qu’un seul argument
     const { orderedWaiting, rejectIds } = computeOrdering(all as any);
 
-    // Reconstruire les listes pour l’UI
     const byId = new Map(all.map(r => [r.id, r]));
-    const waiting = orderedWaiting.map(id => byId.get(id)).filter(Boolean) as Row[];
+    const waiting = (orderedWaiting || [])
+      .map((w: any) => (typeof w === "string" ? byId.get(w) : w))
+      .filter(Boolean) as Row[];
+
     const playing = all.find(r => r.status === "playing") || null;
     const done = all
       .filter(r => r.status === "done")
@@ -65,7 +39,6 @@ export async function GET(req: NextRequest) {
         return (tb || "").localeCompare(ta || "");
       });
 
-    // Flag visuel “nouveau” (jamais encore passé ni en cours)
     const playedSingerIds = new Set(
       all
         .filter(r => r.status === "done" || r.status === "playing")

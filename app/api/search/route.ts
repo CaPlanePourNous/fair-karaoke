@@ -3,38 +3,66 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 import { NextRequest, NextResponse } from "next/server";
-import fs from "fs";
+import { readFile } from "fs/promises";
 import path from "path";
-import { parse } from "csv-parse/sync";
+import Papa from "papaparse";
 
 type Song = { id: string; title: string; artist: string };
 
+const noStore = {
+  "Cache-Control":
+    "no-store, no-cache, must-revalidate, max-age=0, s-maxage=0, proxy-revalidate",
+};
+
 let cache: Song[] | null = null;
 
-function loadCSV(): Song[] {
+async function loadCSV(): Promise<Song[]> {
   if (cache) return cache;
 
-  const csvPath = path.join(process.cwd(), "public", "karafun.csv");
-  const csv = fs.readFileSync(csvPath, "utf8");
+  // 1) Essaye le fichier local
+  const localPath = path.join(process.cwd(), "public", "karafun.csv");
+  let csv: string | null = null;
+  try {
+    csv = await readFile(localPath, "utf8");
+  } catch {
+    // 2) Fallback: URL distante si fournie
+    const url = process.env.KARAFUN_CSV_URL;
+    if (url) {
+      const r = await fetch(url, { cache: "no-store" });
+      if (r.ok) {
+        csv = await r.text();
+      }
+    }
+  }
 
-  // Détecte le séparateur
-  const header = csv.split(/\r?\n/)[0] ?? "";
-  const delimiter = header.includes(";") ? ";" : ",";
+  if (!csv) {
+    throw new Error(
+      "Catalogue introuvable (ni public/karafun.csv, ni KARAFUN_CSV_URL)."
+    );
+  }
 
-  const records = parse(csv, {
-    columns: true,
-    skip_empty_lines: true,
-    trim: true,
-    bom: true,
-    delimiter,
-    relax_column_count: true,
+  // Papa auto-détecte le délimiteur si on laisse delimiter=""
+  const parsed = Papa.parse(csv, {
+    header: true,
+    skipEmptyLines: true,
+    dynamicTyping: false,
+    delimiter: "", // auto-detect ; ; ou ,
+    transformHeader: (h) => h.trim(),
   });
 
-  cache = records.map((r: any) => ({
-    id: String(r.Id ?? r.id ?? "").trim(),
-    title: String(r.Title ?? r.title ?? "").trim(),
-    artist: String(r.Artist ?? r.artist ?? "").trim(),
-  }));
+  if (parsed.errors?.length) {
+    // On log en console mais on essaie quand même de continuer si data existe
+    console.warn("[/api/search] Papa errors:", parsed.errors.slice(0, 3));
+  }
+
+  const rows = Array.isArray(parsed.data) ? parsed.data : [];
+  cache = rows
+    .map((r: any) => ({
+      id: String(r.Id ?? r.id ?? "").trim(),
+      title: String(r.Title ?? r.title ?? "").trim(),
+      artist: String(r.Artist ?? r.artist ?? "").trim(),
+    }))
+    .filter((s) => s.title && s.artist);
 
   return cache!;
 }
@@ -43,9 +71,11 @@ export async function GET(req: NextRequest) {
   try {
     const { searchParams } = new URL(req.url);
     const q = (searchParams.get("q") || "").trim().toLowerCase();
-    if (q.length < 2) return NextResponse.json([]);
+    if (q.length < 2) {
+      return NextResponse.json([], { headers: noStore });
+    }
 
-    const songs = loadCSV();
+    const songs = await loadCSV();
 
     const results = songs.filter(
       (s) =>
@@ -53,17 +83,20 @@ export async function GET(req: NextRequest) {
         s.artist.toLowerCase().includes(q)
     );
 
-    // Ajout de l'URL KaraFun (recherche titre + artiste)
+    // Joins légers + champ karafun_id attendu par RoomClient
     const payload = results.slice(0, 20).map((s) => ({
-      ...s,
+      id: s.id,
+      karafun_id: s.id || null,
+      title: s.title,
+      artist: s.artist,
       url: `https://www.karafun.fr/search/?query=${encodeURIComponent(
         `${s.title} ${s.artist}`
       )}`,
     }));
 
-    return NextResponse.json(payload);
+    return NextResponse.json(payload, { headers: noStore });
   } catch (err) {
-    console.error("[/api/search] CSV read/parse error:", err);
-    return NextResponse.json({ error: "CSV read error" }, { status: 500 });
+    console.error("[/api/search] error:", err);
+    return NextResponse.json({ error: "CSV read/parse error" }, { status: 500, headers: noStore });
   }
 }

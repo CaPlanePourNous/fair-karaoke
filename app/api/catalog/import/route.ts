@@ -3,6 +3,9 @@ import { NextRequest, NextResponse } from "next/server";
 import { parse } from "csv-parse/sync";
 import { createAdminSupabaseClient } from "@/lib/supabaseServer";
 
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+
 type Row = Record<string, string>;
 
 function pick(obj: Row, keys: string[]) {
@@ -20,14 +23,14 @@ export async function POST(req: NextRequest) {
     const csvUrl =
       body.url?.trim() ||
       (configured && configured.trim()) ||
-      // fallback (évite l'échec si l'env n'est pas encore posée)
+      // Fallback (évite l'échec si l'env n'est pas encore posée)
       "https://www.karafun.fr/cl/3107312/de746f0516a28e34c9802584192dc6d3/";
 
     // 1) Télécharger le CSV
     const res = await fetch(csvUrl, { cache: "no-store" });
     if (!res.ok) {
       return NextResponse.json(
-        { error: "fetch_failed", status: res.status },
+        { ok: false, error: "fetch_failed", status: res.status },
         { status: 502 }
       );
     }
@@ -36,8 +39,7 @@ export async function POST(req: NextRequest) {
     // 2) Auto-détection du délimiteur sur la ligne d'entête
     const header = (text.split(/\r?\n/, 1)[0] || "").trim();
     const delimiter = header.includes(";") ? ";" : ",";
-    // (Option) si ni ; ni , détectés, tente ; par défaut
-    const chosen = delimiter || ";";
+    const chosen = delimiter || ";"; // sécurité
 
     // 3) Parse CSV
     const rows: Row[] = parse(text, {
@@ -55,9 +57,7 @@ export async function POST(req: NextRequest) {
         const karafun_id = pick(r, ["Id", "id", "KFN", "karafun_id"]);
         const title = pick(r, ["Title", "title", "TITRE"]);
         const artist = pick(r, ["Artist", "artist", "ARTISTE"]);
-
-        // Ton CSV de référence n'a pas de durée => null
-        const duration_seconds: number | null = null;
+        const duration_seconds: number | null = null; // pas dispo dans ton CSV
 
         if (!karafun_id || !title || !artist) return null;
         return { karafun_id, title, artist, duration_seconds };
@@ -71,7 +71,7 @@ export async function POST(req: NextRequest) {
 
     if (mapped.length === 0) {
       return NextResponse.json(
-        { imported: 0, warning: "no_mapped_rows", delimiter: chosen },
+        { ok: true, imported: 0, warning: "no_mapped_rows", delimiter: chosen },
         { status: 200 }
       );
     }
@@ -87,18 +87,19 @@ export async function POST(req: NextRequest) {
       if (error) {
         console.error("[catalog/import] upsert_failed_chunk", { i, error });
         return NextResponse.json(
-          { error: "upsert_failed_chunk", at: i },
+          { ok: false, error: "upsert_failed_chunk", at: i },
           { status: 500 }
         );
       }
     }
 
     return NextResponse.json(
-      { imported: mapped.length, delimiter: chosen },
+      { ok: true, imported: mapped.length, delimiter: chosen },
       { status: 200 }
     );
-  } catch (e) {
+  } catch (e: unknown) {
     console.error("[catalog/import] fatal:", e);
-    return NextResponse.json({ error: "fatal" }, { status: 500 });
+    const msg = e instanceof Error ? e.message : String(e);
+    return NextResponse.json({ ok: false, error: msg }, { status: 500 });
   }
 }

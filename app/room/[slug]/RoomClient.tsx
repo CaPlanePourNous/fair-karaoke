@@ -2,7 +2,6 @@
 
 import { useState, useEffect } from 'react';
 import { createClient } from '@supabase/supabase-js';
-import styles from "./RoomClient.module.css";
 
 type Suggestion = {
   title: string;
@@ -11,7 +10,7 @@ type Suggestion = {
   url?: string;
 };
 
-// Supabase côté client
+// Supabase côté client (clé publique)
 const supa = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
   process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
@@ -140,6 +139,7 @@ export default function RoomClient({ slug }: { slug: string }) {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
+          room_slug: slug,                 // ← passe le slug
           display_name: displayName.trim(),
           title: title.trim(),
           artist: artist.trim(),
@@ -147,7 +147,10 @@ export default function RoomClient({ slug }: { slug: string }) {
         })
       });
       const data = await r.json();
-      if (!r.ok) { setMsg(`Erreur: ${data.error || 'inconnue'}`); return; }
+      if (!r.ok || data?.ok === false) {
+        setMsg(`Erreur: ${data?.error || 'inconnue'}`);
+        return;
+      }
       setMsg('Demande envoyée 👍');
       setTitle(''); setArtist(''); setKid(null);
     } catch {
@@ -159,7 +162,7 @@ export default function RoomClient({ slug }: { slug: string }) {
 
   return (
     <main style={{ maxWidth: 720, margin: "0 auto", padding: "16px" }}>
-      <h1>🎤 Karaoké – {isLantignie ? "Lantignié" : slug} </h1>
+      <h1>🎤 Karaoké – {isLantignie ? "Lantignié" : slug} 🎶</h1>
 
       {stats && (
         <p style={{
@@ -196,7 +199,7 @@ export default function RoomClient({ slug }: { slug: string }) {
         <p style={{ margin: '6px 0 10px', fontSize: 14, opacity: .85 }}>
           🔎 Pas trouvé ?{" "}
           <a
-            href={`https://www.karafun.fr/search/?q=${encodeURIComponent(q.trim())}`}
+            href={`https://www.karafun.fr/karaoke/search/?q=${encodeURIComponent(q.trim())}`}
             target="_blank"
             rel="noopener noreferrer"
           >
@@ -273,10 +276,13 @@ export default function RoomClient({ slug }: { slug: string }) {
             const r = await fetch('/api/lottery/register', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ display_name: displayName.trim() })
+              body: JSON.stringify({
+                room_slug: slug,                // ← passe le slug
+                display_name: displayName.trim()
+              })
             });
             const d = await r.json();
-            if (!r.ok) setMsg('Erreur tirage : ' + (d.error || 'inconnue'));
+            if (!r.ok || d?.ok === false) setMsg('Erreur tirage : ' + (d?.error || 'inconnue'));
             else {
               setMsg('Inscription au tirage enregistrée ✅');
               if (d.id) saveEntryId(d.id);
@@ -287,7 +293,7 @@ export default function RoomClient({ slug }: { slug: string }) {
             setLotteryLoading(false);
           }
         }}
-        className={isLantignie ? styles.neonButton : undefined}
+        className={isLantignie ? "neonButton" : undefined}  // ← classe globale
         style={!isLantignie ? { padding: '8px 14px', cursor: lotteryLoading ? 'wait' : 'pointer', opacity: lotteryLoading ? .7 : 1 } : undefined}
         disabled={lotteryLoading}
       >
@@ -308,7 +314,7 @@ export default function RoomClient({ slug }: { slug: string }) {
           style={{
             position: 'fixed',
             inset: 0,
-            background: '#1db954',
+            background: '#16a34a', // vert franc
             color: '#fff',
             display: 'flex',
             alignItems: 'center',
@@ -319,12 +325,12 @@ export default function RoomClient({ slug }: { slug: string }) {
             padding: '20px'
           }}
         >
-          <div style={{ fontSize: 28, marginBottom: 8 }}>🎉 TU AS GAGNÉ ! 🎉</div>
+          <div style={{ fontSize: 28, marginBottom: 8 }}>🎉 VOUS AVEZ GAGNÉ ! 🎉</div>
           <div style={{ fontSize: 20, opacity: 0.9 }}>
             {displayName ? displayName : 'Bravo !'}
           </div>
-          <div style={{ marginTop: 16, fontSize: 14, opacity: 0.8 }}>
-            Attends que l’animateur te fasse signe 😉
+          <div style={{ marginTop: 16, fontSize: 14, opacity: 0.9 }}>
+            Attendez que l’animateur vous fasse signe 😉
           </div>
         </div>
       )}

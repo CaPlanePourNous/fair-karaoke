@@ -1,62 +1,66 @@
 // app/api/lottery/register/route.ts
-import { NextResponse } from 'next/server';
-import { sbServer } from '@/lib/supabase';
+import { NextRequest, NextResponse } from "next/server";
+import { createAdminSupabaseClient } from "@/lib/supabaseServer";
 
-function getIP(req: Request) {
-  const xf = req.headers.get('x-forwarded-for');
-  if (xf) return xf.split(',')[0].trim();
-  // @ts-ignore - Next dev server
-  return (req as any).ip || '0.0.0.0';
-}
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 
-function noStore() {
-  return {
-    'Cache-Control': 'no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0',
-  };
-}
+const noStore = {
+  "Cache-Control":
+    "no-store, no-cache, must-revalidate, max-age=0, s-maxage=0, proxy-revalidate",
+};
 
-export async function POST(req: Request) {
-  const body = await req.json().catch(() => ({}));
-  const display_name = String(body.display_name || '').trim();
-  if (!display_name) {
-    return NextResponse.json({ error: 'Nom requis' }, { status: 400, headers: noStore() });
-  }
+type Body = {
+  room_slug?: string;
+  display_name?: string;
+};
 
-  const ip = getIP(req);
-  const today = new Date().toISOString().slice(0, 10);
+export async function POST(req: NextRequest) {
+  try {
+    const { room_slug, display_name } = (await req.json().catch(() => ({}))) as Body;
+    const slug = (room_slug || "").trim();
+    const name = (display_name || "").trim();
 
-  // déjà inscrit avec cette IP aujourd’hui ?
-  const { count, error: e1 } = await sbServer
-    .from('lottery_entries')
-    .select('*', { count: 'exact', head: true })
-    .eq('ip_address', ip)
-    .eq('created_date', today);
-
-  if (e1) {
-    return NextResponse.json({ error: e1.message }, { status: 500, headers: noStore() });
-  }
-
-  if ((count ?? 0) > 0) {
-    return NextResponse.json(
-      { error: 'Déjà inscrit aujourd’hui (1 inscription par appareil).' },
-      { status: 409, headers: noStore() }
-    );
-  }
-
-  // insertion
-  const { data, error } = await sbServer
-    .from('lottery_entries')
-    .insert({ display_name, ip_address: ip })
-    .select()
-    .single();
-
-  if (error) {
-    // conflit d’unicité éventuel
-    if ((error as any).code === '23505') {
-      return NextResponse.json({ error: 'Déjà inscrit aujourd’hui.' }, { status: 409, headers: noStore() });
+    if (!slug || !name) {
+      return NextResponse.json(
+        { ok: false, error: "room_slug et display_name requis" },
+        { status: 400, headers: noStore }
+      );
     }
-    return NextResponse.json({ error: error.message }, { status: 500, headers: noStore() });
-  }
 
-  return NextResponse.json({ ok: true, id: data.id }, { headers: noStore() });
+    const db = createAdminSupabaseClient();
+
+    // 1) Résoudre la salle
+    const { data: room, error: eRoom } = await db
+      .from("rooms")
+      .select("id")
+      .eq("slug", slug)
+      .maybeSingle();
+    if (eRoom) {
+      return NextResponse.json({ ok: false, error: eRoom.message }, { status: 500, headers: noStore });
+    }
+    if (!room) {
+      return NextResponse.json({ ok: false, error: "Room inconnue" }, { status: 404, headers: noStore });
+    }
+
+    // 2) Upsert inscription (évite les doublons par salle)
+    //    ⚠️ Assure-toi d’avoir une contrainte unique: UNIQUE(room_id, lower(trim(display_name)))
+    const { data, error } = await db
+      .from("lottery_entries")
+      .upsert(
+        { room_id: room.id, display_name: name },
+        { onConflict: "room_id,display_name" }
+      )
+      .select("id")
+      .single();
+
+    if (error) {
+      return NextResponse.json({ ok: false, error: error.message }, { status: 500, headers: noStore });
+    }
+
+    return NextResponse.json({ ok: true, id: data.id }, { headers: noStore });
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : String(e);
+    return NextResponse.json({ ok: false, error: msg }, { status: 500, headers: noStore });
+  }
 }

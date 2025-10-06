@@ -1,38 +1,89 @@
-22:54:51.132 Running build in Washington, D.C., USA (East) – iad1
-22:54:51.132 Build machine configuration: 2 cores, 8 GB
-22:54:51.146 Cloning github.com/CaPlanePourNous/fair-karaoke (Branch: master, Commit: dd0c6fa)
-22:54:51.860 Cloning completed: 714.000ms
-22:54:52.543 Restored build cache from previous deployment (En1W5gSgYNcAqXUxrN7smraBabQy)
-22:54:52.952 Running "vercel build"
-22:54:53.326 Vercel CLI 48.2.0
-22:54:53.626 Installing dependencies...
-22:54:54.972 
-22:54:54.973 up to date in 1s
-22:54:54.974 
-22:54:54.974 150 packages are looking for funding
-22:54:54.974   run `npm fund` for details
-22:54:55.002 Detected Next.js version: 15.5.3
-22:54:55.006 Running "npm run build"
-22:54:55.110 
-22:54:55.110 > fair-karaoke@0.1.0 build
-22:54:55.110 > next build
-22:54:55.110 
-22:54:56.162    ▲ Next.js 15.5.3
-22:54:56.162 
-22:54:56.233    Creating an optimized production build ...
-22:55:02.846  ✓ Compiled successfully in 4.0s
-22:55:02.851    Linting and checking validity of types ...
-22:55:08.431 Failed to compile.
-22:55:08.431 
-22:55:08.431 ./app/api/host/play/route.ts:82:62
-22:55:08.431 Type error: Expected 1 arguments, but got 2.
-22:55:08.432 
-22:55:08.432 [0m [90m 80 |[39m
-22:55:08.432  [90m 81 |[39m       [36mconst[39m all [33m=[39m (rows [33m||[39m []) [36mas[39m [33mRow[39m[][33m;[39m
-22:55:08.432 [31m[1m>[22m[39m[90m 82 |[39m       [36mconst[39m { orderedWaiting } [33m=[39m computeOrdering(all [36mas[39m any[33m,[39m { maxQueue[33m:[39m [35m15[39m })[33m;[39m
-22:55:08.432  [90m    |[39m                                                              [31m[1m^[22m[39m
-22:55:08.432  [90m 83 |[39m       id [33m=[39m orderedWaiting[[35m0[39m][33m;[39m [90m// newbies priorisés ici[39m
-22:55:08.432  [90m 84 |[39m       [36mif[39m ([33m![39mid) [36mreturn[39m [33mNextResponse[39m[33m.[39mjson({ ok[33m:[39m [36mfalse[39m[33m,[39m error[33m:[39m [32m"Aucun titre en attente"[39m }[33m,[39m { status[33m:[39m [35m409[39m[33m,[39m headers[33m:[39m noStore })[33m;[39m
-22:55:08.433  [90m 85 |[39m     }[0m
-22:55:08.452 Next.js build worker exited with code: 1 and signal: null
-22:55:08.472 Error: Command "npm run build" exited with 1s
+// app/api/host/queue/route.ts
+import { NextRequest, NextResponse } from "next/server";
+import { createAdminSupabaseClient } from "@/lib/supabaseServer";
+import { computeOrdering } from "@/lib/ordering";
+
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+
+const noStore = {
+  "Cache-Control": "no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0, s-maxage=0",
+};
+
+type Row = {
+  id: string;
+  room_id: string;
+  singer_id: string | null;
+  singer: string | null; // legacy
+  title: string;
+  artist: string;
+  status: "waiting" | "playing" | "done" | "rejected";
+  created_at: string;
+  updated_at: string | null;
+  played_at: string | null;
+  ip: string | null;
+};
+
+export async function GET(req: NextRequest) {
+  try {
+    const db = createAdminSupabaseClient();
+    const { searchParams } = new URL(req.url);
+    const roomSlug = searchParams.get("room_slug") || "lantignie";
+    let room_id = searchParams.get("room_id") || "";
+
+    // Résoudre room_id si besoin
+    if (!room_id) {
+      const { data: r, error: eRoom } = await db.from("rooms").select("id").eq("slug", roomSlug).maybeSingle();
+      if (eRoom) return NextResponse.json({ ok: false, error: eRoom.message }, { status: 500, headers: noStore });
+      if (!r)   return NextResponse.json({ ok: false, error: "Room inconnue" }, { status: 404, headers: noStore });
+      room_id = r.id as string;
+    }
+
+    // Charger toutes les requêtes de la room (ordre brut)
+    const { data: rows, error: eReq } = await db
+      .from("requests")
+      .select("id, room_id, singer_id, singer, title, artist, status, created_at, updated_at, played_at, ip")
+      .eq("room_id", room_id)
+      .order("created_at", { ascending: true });
+
+    if (eReq) return NextResponse.json({ ok: false, error: eReq.message }, { status: 500, headers: noStore });
+
+    const all = (rows || []) as Row[];
+
+    // Appliquer l’algorithme R1–R5 (+ anti-spam IP) — ta version de computeOrdering ne prend qu’un seul argument
+    const { orderedWaiting, rejectIds } = computeOrdering(all as any);
+
+    // Reconstruire les listes pour l’UI
+    const byId = new Map(all.map(r => [r.id, r]));
+    const waiting = orderedWaiting.map(id => byId.get(id)).filter(Boolean) as Row[];
+    const playing = all.find(r => r.status === "playing") || null;
+    const done = all
+      .filter(r => r.status === "done")
+      .sort((a, b) => {
+        const ta = a.played_at || a.updated_at || a.created_at;
+        const tb = b.played_at || b.updated_at || b.created_at;
+        return (tb || "").localeCompare(ta || "");
+      });
+
+    // Flag visuel “nouveau” (jamais encore passé ni en cours)
+    const playedSingerIds = new Set(
+      all
+        .filter(r => r.status === "done" || r.status === "playing")
+        .map(r => r.singer_id)
+        .filter(Boolean)
+    );
+    const waitingWithFlag = waiting.map(r => ({
+      ...r,
+      isNew: r.singer_id ? !playedSingerIds.has(r.singer_id) : true,
+    }));
+
+    return NextResponse.json(
+      { ok: true, room_id, playing, waiting: waitingWithFlag, played: done, rejectIds },
+      { headers: noStore }
+    );
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : String(e);
+    console.error("Erreur /api/host/queue :", e);
+    return NextResponse.json({ ok: false, error: msg }, { status: 500, headers: noStore });
+  }
+}

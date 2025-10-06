@@ -1,205 +1,176 @@
 // lib/ordering.ts
 
-export type RequestRow = {
+export type Status = "waiting" | "playing" | "done" | "rejected";
+
+export type Req = {
   id: string;
-  // Nouveau schéma : on priorise singer_id (uuid)
-  singer_id?: string | null;
-  // Legacy (temps de migration) : on garde singer (texte) pour fallback
-  singer?: string | null;
-  display_name?: string | null; // optionnel, utile côté UI
+  room_id: string;
+  singer_id: string | null;
+  singer?: string | null; // legacy texte
   title: string;
   artist: string;
+  status: Status;
+  created_at: string;        // ISO
+  updated_at?: string | null;
+  played_at?: string | null;
   ip?: string | null;
-  status: "waiting" | "playing" | "done" | "rejected";
-  created_at: string; // ISO
 };
 
 export type OrderingInput = {
-  requests: RequestRow[]; // waiting | playing | done | rejected (on filtrera)
-  alreadyPlayed?: Array<{ title: string; artist: string }>;
-  now?: Date;
-  maxQueue?: number; // défaut 15
+  waiting: Req[];
+  playing: Req | null;
+  done: Req[];
 };
 
 export type OrderingResult = {
-  rejectIds: string[];      // à passer "rejected"
-  orderedWaiting: string[]; // file d’attente finale (ids) dans l’ordre
+  rejectIds: string[];
+  orderedWaiting: Req[];
   reasons: Record<string, string>;
 };
 
-const dupKey = (t: string, a: string) =>
-  `${t}`.trim().toLowerCase() + " :: " + `${a}`.trim().toLowerCase();
-
-// Identifiant stable de chanteur : singer_id sinon singer, sinon un placeholder unique
-const singerKeyOf = (r: Pick<RequestRow, "id" | "singer_id" | "singer">) =>
-  (r.singer_id && String(r.singer_id)) ||
-  (r.singer && r.singer.trim().toLowerCase()) ||
-  `__unknown__#${r.id}`;
-
 /**
- * Calcule la file d’attente stable selon R1–R5 + anti-spam 30s IP.
- * - R1: 2 chansons max par chanteur (compte playing + waiting)
- * - R2: 3 chansons d’écart mini (tolérance si impossible)
- * - R3: nouveaux chanteurs prioritaires
+ * Règles:
+ * - R1: 2 chansons max par chanteur (waiting + playing)
+ * - R2: espacement ≥3 entre deux titres du même chanteur (greedy; si impossible on relâche)
+ * - R3: "newbies" (jamais passés, ni en cours) prioritaires
  * - R4: file max 15
- * - R5: pas de doublon (title+artist), y compris "done"
- * - Anti-spam: 30s entre deux demandes d’une même IP
- *
- * ⚠️ NOTE: l’anti-spam doit aussi être appliqué à l’insertion (/api/requests).
+ * - R5: pas de doublon (titre+artiste) même s'il est "done"
  */
 export function computeOrdering(input: OrderingInput): OrderingResult {
-  const now = input.now ?? new Date();
-  const MAX = input.maxQueue ?? 15;
+  const playing = input.playing;
+  const waiting = [...input.waiting];
+  const done = [...input.done];
 
-  const playing = input.requests.filter((r) => r.status === "playing");
-  const done = input.requests.filter((r) => r.status === "done");
-  const waiting = input.requests
-    .filter((r) => r.status === "waiting")
-    .sort(
-      (a, b) =>
-        new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
-    );
-
-  // R5: pas de doublon (inclut done et éventuellement alreadyPlayed)
-  const playedSet = new Set<string>([
-    ...done.map((d) => dupKey(d.title, d.artist)),
-    ...(input.alreadyPlayed ?? []).map((p) => dupKey(p.title, p.artist)),
-  ]);
-
-  const currentPlayingSingerKey = playing[0]
-    ? singerKeyOf(playing[0])
-    : null;
-
-  const reasons: Record<string, string> = [];
+  const reasons: Record<string, string> = {}; // ✅ objet, pas tableau
   const rejectIds: string[] = [];
 
-  // R1: compteur par chanteur (inclut playing)
-  const perSingerCount: Record<string, number> = {};
-  for (const r of playing) {
-    const sk = singerKeyOf(r);
-    perSingerCount[sk] = (perSingerCount[sk] ?? 0) + 1;
+  // Normalisation clé "titre+artiste" pour R5
+  const keyOf = (r: Req) =>
+    `${r.title}`.trim().toLowerCase() + "—" + `${r.artist}`.trim().toLowerCase();
+
+  // R5 — doublons: on construit l'ensemble de tout ce qui existe déjà
+  const seenKeys = new Set<string>();
+  for (const r of [...done, ...(playing ? [playing] : []), ...waiting]) {
+    // On ne marque pas waiting maintenant pour ne pas auto-rejeter tous les doublons d'un coup;
+    // on marquera au fil de l'eau: doublon si clé déjà vue AVANT dans l'historique (done/playing)
   }
+  for (const r of done) seenKeys.add(keyOf(r));
+  if (playing) seenKeys.add(keyOf(playing));
 
-  // Anti-spam IP : contrôle <30s entre demandes successives du même IP dans waiting
-  const waitingByTime = [...waiting].sort(
-    (a, b) =>
-      new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
-  );
+  // R1 — compteur par chanteur (waiting + playing)
+  const countBySinger: Record<string, number> = {};
+  const inc = (sid: string) => (countBySinger[sid] = (countBySinger[sid] ?? 0) + 1);
+  if (playing?.singer_id) inc(playing.singer_id);
 
-  const validCandidates: RequestRow[] = [];
-
-  for (let i = 0; i < waitingByTime.length; i++) {
-    const r = waitingByTime[i];
-    const k = dupKey(r.title, r.artist);
-    const sk = singerKeyOf(r);
-
-    // R5: doublon déjà joué
-    if (playedSet.has(k)) {
+  // On rejette d'abord (hard) les waiting qui violent R5 (doublon existant) ou R1 (>2)
+  const prefiltered: Req[] = [];
+  for (const r of waiting) {
+    // R5 doublon?
+    const k = keyOf(r);
+    if (seenKeys.has(k)) {
       rejectIds.push(r.id);
-      reasons[r.id] = "R5: doublon (déjà passé)";
-      continue;
-    }
-    // R5: doublon multiple en waiting (on garde le plus ancien)
-    if (validCandidates.some((x) => dupKey(x.title, x.artist) === k)) {
-      rejectIds.push(r.id);
-      reasons[r.id] = "R5: doublon (waiting)";
+      reasons[r.id] = "R5: doublon (titre+artiste déjà présent)";
       continue;
     }
 
-    // Anti-spam IP < 30s (dans waiting courant)
-    if (r.ip) {
-      const prev = waitingByTime.slice(0, i).filter((x) => x.ip === r.ip).pop();
-      if (prev) {
-        const dt =
-          (new Date(r.created_at).getTime() -
-            new Date(prev.created_at).getTime()) / 1000;
-        if (dt < 30) {
-          rejectIds.push(r.id);
-          reasons[r.id] = "Anti-spam IP: <30s";
-          continue;
-        }
+    // R1 2 max par chanteur (count waiting+playing)
+    const sid = r.singer_id || "";
+    if (sid) {
+      const nextCount = (countBySinger[sid] ?? 0) + 1;
+      if (nextCount > 2) {
+        rejectIds.push(r.id);
+        reasons[r.id] = "R1: 2 chansons max par chanteur";
+        continue;
       }
     }
 
-    // R1: max 2 par chanteur (incluant playing)
-    const count = perSingerCount[sk] ?? 0;
-    if (count >= 2) {
-      rejectIds.push(r.id);
-      reasons[r.id] = "R1: >2 par chanteur";
-      continue;
-    }
-
-    perSingerCount[sk] = count + 1;
-    validCandidates.push(r);
+    // ok pour la suite
+    prefiltered.push(r);
+    if (sid) inc(sid);
+    // On ajoute sa clé dans seenKeys pour éviter qu'un autre waiting identique passe plus tard
+    seenKeys.add(k);
   }
 
-  // R3: nouveaux chanteurs prioritaires (pas en playing, pas dans done)
-  const singersWithHistory = new Set<string>([
-    ...done.map((d) => singerKeyOf(d)),
-    ...(currentPlayingSingerKey ? [currentPlayingSingerKey] : []),
-  ]);
+  // R3 — "newbie": jamais passé (done) et pas en cours
+  const passedSinger = new Set<string>();
+  for (const r of done) if (r.singer_id) passedSinger.add(r.singer_id);
+  if (playing?.singer_id) passedSinger.add(playing.singer_id);
 
-  const newbies = validCandidates.filter(
-    (r) => !singersWithHistory.has(singerKeyOf(r))
-  );
-  const olds = validCandidates.filter((r) =>
-    singersWithHistory.has(singerKeyOf(r))
-  );
+  // Base de tri initial: newbies d'abord, puis ancienneté (created_at ASC)
+  prefiltered.sort((a, b) => {
+    const aNew = a.singer_id ? !passedSinger.has(a.singer_id) : false;
+    const bNew = b.singer_id ? !passedSinger.has(b.singer_id) : false;
+    if (aNew !== bNew) return aNew ? -1 : 1;
+    return Date.parse(a.created_at) - Date.parse(b.created_at);
+  });
 
-  const ordered: RequestRow[] = [];
+  // R2 — espacement ≥3: on construit l'ordre en insérant tant que possible
+  const ordered: Req[] = [];
+  const pool = [...prefiltered];
 
-  // R2: >= 3 d’écart entre deux entrées du même chanteur.
-  const canPlace = (row: RequestRow, list: RequestRow[]) => {
-    const sk = singerKeyOf(row);
-    const lastIndex = [...list]
-      .map((x, i) => [singerKeyOf(x), i] as const)
-      .filter(([s]) => s === sk)
-      .map(([, i]) => i)
-      .pop();
-    if (lastIndex === undefined) return true;
-    // on place en fin → il faut au moins 3 éléments entre les deux occurrences
-    return list.length - lastIndex >= 4;
-  };
+  // Pour la contrainte d'espacement, on considère l'historique récent:
+  // on simule une "timeline" avec (done tail récent + playing + ordered) pour connaître la "distance".
+  // Ici, on ne garde que l'info de dernière position par chanteur.
+  const lastPos: Record<string, number> = {};
+  let pos = 0;
 
-  const drainWithSpacing = (pool: RequestRow[]) => {
-    const remaining = [...pool];
-    let progressed = true;
-    while (remaining.length && progressed) {
-      progressed = false;
-      for (let i = 0; i < remaining.length; i++) {
-        const candidate = remaining[i];
-        if (canPlace(candidate, ordered)) {
-          ordered.push(candidate);
-          remaining.splice(i, 1);
-          progressed = true;
-          i--;
-        }
+  // seed avec done (on ne connaît pas leur ordre exact -> on prend par played_at/created_at ASC)
+  const seed = [...done];
+  seed.sort((a, b) => {
+    const ta = Date.parse(a.played_at || a.created_at);
+    const tb = Date.parse(b.played_at || b.created_at);
+    return ta - tb;
+  });
+  for (const r of seed) {
+    if (r.singer_id) lastPos[r.singer_id] = pos++;
+  }
+  if (playing?.singer_id) lastPos[playing.singer_id] = pos++;
+
+  // Greedy: à chaque étape, on prend le premier candidat qui respecte la distance >=3
+  // Si aucun ne peut être placé, on relaxe (on prend le premier).
+  while (pool.length > 0) {
+    let pickedIndex = -1;
+
+    for (let i = 0; i < pool.length; i++) {
+      const cand = pool[i];
+      const sid = cand.singer_id || "";
+      if (!sid) {
+        pickedIndex = i;
+        break;
+      }
+      const lp = lastPos[sid];
+      if (lp === undefined || pos - lp >= 3) {
+        pickedIndex = i;
+        break;
       }
     }
-    // Tolérance si R2 strict est impossible
-    for (const r of remaining) {
-      ordered.push(r);
-      reasons[r.id] =
-        (reasons[r.id] ?? "") +
-        (reasons[r.id] ? " | " : "") +
-        "R2: tolérance";
+
+    if (pickedIndex < 0) {
+      // Relax: on prend le premier (on documente que R2 a été relâché pour ce candidat)
+      pickedIndex = 0;
+      const c = pool[pickedIndex];
+      reasons[c.id] = reasons[c.id]
+        ? reasons[c.id] + " | R2 tolérance"
+        : "R2 tolérance";
     }
-  };
 
-  drainWithSpacing(newbies);
-  drainWithSpacing(olds);
-
-  // R4: limite 15
-  const clipped = ordered.slice(0, MAX);
-  const overflow = ordered.slice(MAX);
-  for (const r of overflow) {
-    rejectIds.push(r.id);
-    reasons[r.id] = "R4: file pleine (15)";
+    const chosen = pool.splice(pickedIndex, 1)[0];
+    ordered.push(chosen);
+    const sid = chosen.singer_id || "";
+    if (sid) lastPos[sid] = pos;
+    pos++;
   }
 
-  return {
-    rejectIds,
-    orderedWaiting: clipped.map((r) => r.id),
-    reasons,
-  };
+  // R4 — limite 15
+  const limited = ordered.slice(0, 15);
+  if (ordered.length > 15) {
+    for (const r of ordered.slice(15)) {
+      rejectIds.push(r.id);
+      reasons[r.id] = reasons[r.id]
+        ? reasons[r.id] + " | R4: file pleine (15)"
+        : "R4: file pleine (15)";
+    }
+  }
+
+  return { rejectIds, orderedWaiting: limited, reasons };
 }

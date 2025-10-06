@@ -31,11 +31,12 @@
 
   /* --- Fichiers pris en compte --- */
   "include": [
-    "next-env.d.ts",
-    "**/*.ts",
-    "**/*.tsx",
-    ".next/types/**/*.ts"
-  ],
+  "next-env.d.ts",
+  "**/*.ts",
+  "**/*.tsx",
+  "**/*.d.ts",
+  ".next/types/**/*.ts"
+],
 
   /* --- Fichiers ignorés --- */
   "exclude": ["node_modules"]

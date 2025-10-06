@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createAdminSupabaseClient } from "@/lib/supabaseServer";
+import { computeOrdering } from "@/lib/ordering";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -10,9 +11,22 @@ const noStore = {
 };
 
 type Body = {
-  id?: string;          // id de la request à jouer (recommandé)
-  room_id?: string;     // optionnel si id fourni
-  room_slug?: string;   // optionnel: on peut déduire room_id depuis le slug
+  id?: string;       // id de la request à jouer (recommandé)
+  room_id?: string;
+  room_slug?: string;
+};
+
+type Row = {
+  id: string;
+  room_id: string;
+  singer_id: string | null;
+  title: string;
+  artist: string;
+  status: "waiting" | "playing" | "done" | "rejected";
+  created_at: string;
+  updated_at: string | null;
+  played_at: string | null;
+  ip: string | null;
 };
 
 export async function POST(req: NextRequest) {
@@ -20,13 +34,10 @@ export async function POST(req: NextRequest) {
     const db = createAdminSupabaseClient();
     const body = (await req.json().catch(() => ({}))) as Body;
 
-    // 1) Résoudre la cible (id) et la salle (room_id)
     let { id, room_id, room_slug } = body;
 
+    // Inférer room_slug via Referer si besoin
     if (!id && !room_id && !room_slug) {
-      // fallback: si aucun id, on prendra le 1er en attente.
-      // Mais il faut une room (par room_id ou slug) pour le chercher.
-      // On essaie d’inférer depuis le Referer /host/<slug>
       const ref = req.headers.get("referer") || "";
       try {
         const u = new URL(ref);
@@ -35,50 +46,23 @@ export async function POST(req: NextRequest) {
       } catch {}
     }
 
+    // Résoudre room_id si besoin
     if (room_slug && !room_id) {
-      const { data: r, error: eRoom } = await db
-        .from("rooms")
-        .select("id")
-        .eq("slug", room_slug)
-        .maybeSingle();
-      if (eRoom) {
-        return NextResponse.json(
-          { ok: false, error: eRoom.message },
-          { status: 500, headers: noStore }
-        );
-      }
-      if (!r) {
-        return NextResponse.json(
-          { ok: false, error: "Room inconnue" },
-          { status: 404, headers: noStore }
-        );
-      }
+      const { data: r, error: eRoom } = await db.from("rooms").select("id").eq("slug", room_slug).maybeSingle();
+      if (eRoom) return NextResponse.json({ ok: false, error: eRoom.message }, { status: 500, headers: noStore });
+      if (!r)   return NextResponse.json({ ok: false, error: "Room inconnue" }, { status: 404, headers: noStore });
       room_id = r.id as string;
     }
 
-    // Si on a un id mais pas de room, on la déduit depuis la request
+    // Si id fourni sans room → la déduire
     if (id && !room_id) {
-      const { data: reqRow, error: eReq } = await db
-        .from("requests")
-        .select("room_id, status")
-        .eq("id", id)
-        .maybeSingle();
-      if (eReq) {
-        return NextResponse.json(
-          { ok: false, error: eReq.message },
-          { status: 500, headers: noStore }
-        );
-      }
-      if (!reqRow) {
-        return NextResponse.json(
-          { ok: false, error: "Demande introuvable" },
-          { status: 404, headers: noStore }
-        );
-      }
+      const { data: reqRow, error: eReq } = await db.from("requests").select("room_id").eq("id", id).maybeSingle();
+      if (eReq) return NextResponse.json({ ok: false, error: eReq.message }, { status: 500, headers: noStore });
+      if (!reqRow) return NextResponse.json({ ok: false, error: "Demande introuvable" }, { status: 404, headers: noStore });
       room_id = reqRow.room_id as string;
     }
 
-    // Si aucun id : on choisit la prochaine en attente (ordre simple: plus ancienne)
+    // Choisir la cible si pas d'id → via computeOrdering (R1–R5 + R3 newbies)
     if (!id) {
       if (!room_id) {
         return NextResponse.json(
@@ -86,42 +70,25 @@ export async function POST(req: NextRequest) {
           { status: 400, headers: noStore }
         );
       }
-      const { data: nextRow, error: eNext } = await db
+      const { data: rows, error: eRows } = await db
         .from("requests")
-        .select("id")
+        .select("id, room_id, singer_id, title, artist, status, created_at, updated_at, played_at, ip")
         .eq("room_id", room_id)
-        .eq("status", "waiting")
-        .order("created_at", { ascending: true })
-        .limit(1)
-        .maybeSingle();
+        .order("created_at", { ascending: true });
 
-      if (eNext) {
-        return NextResponse.json(
-          { ok: false, error: eNext.message },
-          { status: 500, headers: noStore }
-        );
-      }
-      if (!nextRow) {
-        return NextResponse.json(
-          { ok: false, error: "Aucun titre en attente" },
-          { status: 409, headers: noStore }
-        );
-      }
-      id = nextRow.id as string;
+      if (eRows) return NextResponse.json({ ok: false, error: eRows.message }, { status: 500, headers: noStore });
+
+      const all = (rows || []) as Row[];
+      const { orderedWaiting } = computeOrdering(all as any, { maxQueue: 15 });
+      id = orderedWaiting[0]; // newbies priorisés ici
+      if (!id) return NextResponse.json({ ok: false, error: "Aucun titre en attente" }, { status: 409, headers: noStore });
     }
 
-    // 2) Garde-fou : nettoyer toute entrée encore "playing" pour cette room
-    //    (important pour éviter le conflit sur l'index unique one_playing_per_room)
+    // Sécurité: nettoyer tout “playing” de la room avant de promouvoir
     if (!room_id) {
-      // Par sécurité, on redéduit room_id depuis l'id (si l’appel venait sans contexte)
-      const { data: reqRow2 } = await db
-        .from("requests")
-        .select("room_id")
-        .eq("id", id!)
-        .maybeSingle();
+      const { data: reqRow2 } = await db.from("requests").select("room_id").eq("id", id!).maybeSingle();
       room_id = reqRow2?.room_id as string | undefined;
     }
-
     if (room_id) {
       const { error: eClean } = await db
         .from("requests")
@@ -132,15 +99,10 @@ export async function POST(req: NextRequest) {
         })
         .eq("room_id", room_id)
         .eq("status", "playing");
-      if (eClean) {
-        return NextResponse.json(
-          { ok: false, error: eClean.message },
-          { status: 500, headers: noStore }
-        );
-      }
+      if (eClean) return NextResponse.json({ ok: false, error: eClean.message }, { status: 500, headers: noStore });
     }
 
-    // 3) Promouvoir la cible en "playing"
+    // Promouvoir la cible en "playing"
     const { data: nowPlaying, error: ePlay } = await db
       .from("requests")
       .update({
@@ -152,25 +114,12 @@ export async function POST(req: NextRequest) {
       .select("id, title, artist, singer, singer_id, room_id, status")
       .maybeSingle();
 
-    if (ePlay) {
-      // S’il reste un playing résiduel à cause d’une course, l’index unique  "one_playing_per_room"
-      // renverra 23505 ici. On remonte un message clair.
-      return NextResponse.json(
-        { ok: false, error: ePlay.message },
-        { status: 409, headers: noStore }
-      );
-    }
+    if (ePlay) return NextResponse.json({ ok: false, error: ePlay.message }, { status: 409, headers: noStore });
     if (!nowPlaying) {
-      return NextResponse.json(
-        { ok: false, error: "Impossible de passer en lecture (id introuvable)" },
-        { status: 404, headers: noStore }
-      );
+      return NextResponse.json({ ok: false, error: "Impossible de passer en lecture (id introuvable)" }, { status: 404, headers: noStore });
     }
 
-    return NextResponse.json(
-      { ok: true, now_playing: nowPlaying },
-      { headers: noStore }
-    );
+    return NextResponse.json({ ok: true, now_playing: nowPlaying }, { headers: noStore });
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e);
     return NextResponse.json({ ok: false, error: msg }, { status: 500, headers: noStore });

@@ -76,9 +76,24 @@ export async function POST(req: NextRequest) {
       if (eRows) return NextResponse.json({ ok: false, error: eRows.message }, { status: 500, headers: noStore });
 
       const all = (rows || []) as Row[];
-      const { orderedWaiting } = computeOrdering(all as any);
+      const playing = all.find(r => r.status === "playing") || null;
+      const waitingRaw = all.filter(r => r.status === "waiting");
+      const doneRaw = all.filter(r => r.status === "done");
 
-      const first = orderedWaiting?.[0] as unknown;
+      // ---- computeOrdering: 2 signatures + fallback FIFO ----
+      let first: any = null;
+      try {
+        const { orderedWaiting } = computeOrdering(all as any);
+        first = orderedWaiting?.[0];
+      } catch {
+        try {
+          const res2 = computeOrdering({ waiting: waitingRaw, playing, done: doneRaw } as any) as any;
+          first = res2?.orderedWaiting?.[0];
+        } catch {
+          first = waitingRaw?.[0] ?? null; // FIFO fallback
+        }
+      }
+
       const nextId =
         typeof first === "string"
           ? first

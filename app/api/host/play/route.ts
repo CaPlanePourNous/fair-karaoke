@@ -11,7 +11,7 @@ const noStore = {
 };
 
 type Body = {
-  id?: string;       // id de la request à jouer (recommandé)
+  id?: string;
   room_id?: string;
   room_slug?: string;
 };
@@ -36,7 +36,6 @@ export async function POST(req: NextRequest) {
 
     let { id, room_id, room_slug } = body;
 
-    // Inférer room_slug via Referer si besoin
     if (!id && !room_id && !room_slug) {
       const ref = req.headers.get("referer") || "";
       try {
@@ -46,7 +45,6 @@ export async function POST(req: NextRequest) {
       } catch {}
     }
 
-    // Résoudre room_id si besoin
     if (room_slug && !room_id) {
       const { data: r, error: eRoom } = await db.from("rooms").select("id").eq("slug", room_slug).maybeSingle();
       if (eRoom) return NextResponse.json({ ok: false, error: eRoom.message }, { status: 500, headers: noStore });
@@ -54,7 +52,6 @@ export async function POST(req: NextRequest) {
       room_id = r.id as string;
     }
 
-    // Si id fourni sans room → la déduire
     if (id && !room_id) {
       const { data: reqRow, error: eReq } = await db.from("requests").select("room_id").eq("id", id).maybeSingle();
       if (eReq) return NextResponse.json({ ok: false, error: eReq.message }, { status: 500, headers: noStore });
@@ -62,7 +59,7 @@ export async function POST(req: NextRequest) {
       room_id = reqRow.room_id as string;
     }
 
-    // Choisir la cible si pas d'id → via computeOrdering (R1–R5 + R3 newbies)
+    // Choisir via computeOrdering si pas d'id fourni
     if (!id) {
       if (!room_id) {
         return NextResponse.json(
@@ -79,12 +76,13 @@ export async function POST(req: NextRequest) {
       if (eRows) return NextResponse.json({ ok: false, error: eRows.message }, { status: 500, headers: noStore });
 
       const all = (rows || []) as Row[];
-      const { orderedWaiting } = computeOrdering(all as any, { maxQueue: 15 });
-      id = orderedWaiting[0]; // newbies priorisés ici
+      // 🔧 computeOrdering ne prend qu'un seul argument dans ta version actuelle
+      const { orderedWaiting } = computeOrdering(all as any);
+      id = orderedWaiting[0];
       if (!id) return NextResponse.json({ ok: false, error: "Aucun titre en attente" }, { status: 409, headers: noStore });
     }
 
-    // Sécurité: nettoyer tout “playing” de la room avant de promouvoir
+    // Nettoyer tout playing pour la room (évite l’unicité qui pète)
     if (!room_id) {
       const { data: reqRow2 } = await db.from("requests").select("room_id").eq("id", id!).maybeSingle();
       room_id = reqRow2?.room_id as string | undefined;

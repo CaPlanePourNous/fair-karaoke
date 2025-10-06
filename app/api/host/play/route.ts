@@ -1,129 +1,120 @@
 // app/api/host/play/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { createAdminSupabaseClient } from "@/lib/supabaseServer";
-import { computeOrdering } from "@/lib/ordering";
+import { computeOrdering, type Req } from "@/lib/ordering";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-type ReqRow = {
-  id: string;
-  title: string;
-  artist: string;
-  status: "waiting" | "playing" | "done" | "rejected";
-  created_at: string;
-  singer_id: string | null;
-  singer?: string | null; // rétro-compat si le champ texte existe encore
-  ip?: string | null;
+type Body = {
+  id?: string;         // si fourni: on force ce titre en "playing"
+  room_slug?: string;  // sinon: on choisit le prochain via computeOrdering
+  room_id?: string;
+};
+
+const noStore = {
+  "Cache-Control":
+    "no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0, s-maxage=0",
 };
 
 export async function POST(req: NextRequest) {
+  const db = createAdminSupabaseClient();
+
   try {
-    const body = (await req.json().catch(() => ({}))) as {
-      room_slug?: string;
-      room_id?: string;
-    };
+    const { id, room_slug, room_id } = (await req.json().catch(() => ({}))) as Body;
 
-    const db = createAdminSupabaseClient();
+    // --- 1) Si un id est fourni: on met ce request en "playing" (chemin rapide, aligné avec HostClient.handleNext)
+    if (id) {
+      // sécurité douce: on vérifie qu’il existe (et on récupère la room)
+      const { data: row, error: eRow } = await db
+        .from("requests")
+        .select("id, room_id, status")
+        .eq("id", id)
+        .maybeSingle();
+      if (eRow) return NextResponse.json({ ok: false, error: eRow.message }, { status: 500, headers: noStore });
+      if (!row) return NextResponse.json({ ok: false, error: "Demande introuvable" }, { status: 404, headers: noStore });
 
-    // 1) Résoudre la room (slug prioritaire, room_id fallback)
-    let roomId = (body.room_id || "").trim();
-    if (!roomId) {
-      const slug = (body.room_slug || "").trim();
+      // On bascule en "playing"
+      const { error: eUp } = await db
+        .from("requests")
+        .update({ status: "playing", updated_at: new Date().toISOString() })
+        .eq("id", id);
+      if (eUp) return NextResponse.json({ ok: false, error: eUp.message }, { status: 500, headers: noStore });
+
+      return NextResponse.json({ ok: true, now_playing: id, room_id: row.room_id }, { headers: noStore });
+    }
+
+    // --- 2) Sinon: on choisit le prochain via computeOrdering (nécessite la salle)
+    // Résoudre room_id
+    let rid = (room_id || "").trim();
+    if (!rid) {
+      const slug = (room_slug || "").trim();
       if (!slug) {
-        return NextResponse.json(
-          { ok: false, error: "room_slug ou room_id requis" },
-          { status: 400 }
-        );
+        return NextResponse.json({ ok: false, error: "room_slug ou room_id requis" }, { status: 400, headers: noStore });
       }
       const { data: room, error: eRoom } = await db
         .from("rooms")
         .select("id")
         .eq("slug", slug)
         .maybeSingle();
-      if (eRoom) return NextResponse.json({ ok: false, error: eRoom.message }, { status: 500 });
-      if (!room) return NextResponse.json({ ok: false, error: "Room inconnue" }, { status: 404 });
-      roomId = room.id as string;
+      if (eRoom) return NextResponse.json({ ok: false, error: eRoom.message }, { status: 500, headers: noStore });
+      if (!room) return NextResponse.json({ ok: false, error: "Room inconnue" }, { status: 404, headers: noStore });
+      rid = room.id as string;
     }
 
-    // 2) Charger l’état de la salle
-    const { data: rows, error: eReq } = await db
+    // Récupère l'état courant de la file pour cette salle
+    // playing (le plus récent)
+    const { data: playingRow } = await db
       .from("requests")
-      .select("id,title,artist,status,created_at,singer_id,singer,ip")
-      .eq("room_id", roomId)
-      .in("status", ["waiting", "playing", "done"])
-      .order("created_at", { ascending: true });
-
-    if (eReq) return NextResponse.json({ ok: false, error: eReq.message }, { status: 500 });
-
-    const requests = (rows ?? []) as ReqRow[];
-    const current = requests.find((r) => r.status === "playing") || null;
-
-    // 3) Calcul R1–R5 (+ anti-spam IP) sur la file
-    const ordering = computeOrdering({ requests, maxQueue: 15 });
-    const nextId = ordering.orderedWaiting[0];
-
-    // 4) Si quelque chose joue → le marquer "done"
-    if (current?.id) {
-      const { error: eDone } = await db
-        .from("requests")
-        .update({ status: "done", played_at: new Date().toISOString() })
-        .eq("id", current.id);
-      if (eDone) {
-        return NextResponse.json({ ok: false, error: eDone.message }, { status: 500 });
-      }
-    }
-
-    // 5) Promouvoir le premier waiting ordonné → "playing"
-    if (!nextId) {
-      // Rien en attente : on a seulement clôturé l’actuel
-      return NextResponse.json({
-        ok: true,
-        just_done: current ? { id: current.id } : null,
-        now_playing: null,
-        message: "File vide",
-      });
-    }
-
-    const { data: nextRow, error: eSel } = await db
-      .from("requests")
-      .select("id,title,artist,singer_id")
-      .eq("id", nextId)
+      .select("id, room_id, singer_id, singer, title, artist, status, created_at, updated_at, played_at")
+      .eq("room_id", rid)
+      .eq("status", "playing")
+      .order("updated_at", { ascending: false, nullsFirst: false })
+      .limit(1)
       .maybeSingle();
 
-    if (eSel) return NextResponse.json({ ok: false, error: eSel.message }, { status: 500 });
-    if (!nextRow) return NextResponse.json({ ok: false, error: "Prochain titre introuvable" }, { status: 404 });
-
-    const { error: ePlay } = await db
+    // waiting (ordre ancienneté croissante)
+    const { data: waitingRows, error: eWait } = await db
       .from("requests")
-      .update({ status: "playing", played_at: new Date().toISOString() })
-      .eq("id", nextRow.id);
+      .select("id, room_id, singer_id, singer, title, artist, status, created_at, updated_at, played_at")
+      .eq("room_id", rid)
+      .eq("status", "waiting")
+      .order("created_at", { ascending: true })
+      .limit(200);
+    if (eWait) return NextResponse.json({ ok: false, error: eWait.message }, { status: 500, headers: noStore });
 
-    if (ePlay) return NextResponse.json({ ok: false, error: ePlay.message }, { status: 500 });
+    // done (on prend un historique suffisant pour R2/R5)
+    const { data: doneRows, error: eDone } = await db
+      .from("requests")
+      .select("id, room_id, singer_id, singer, title, artist, status, created_at, updated_at, played_at")
+      .eq("room_id", rid)
+      .eq("status", "done")
+      .order("played_at", { ascending: false, nullsFirst: false })
+      .limit(200);
+    if (eDone) return NextResponse.json({ ok: false, error: eDone.message }, { status: 500, headers: noStore });
 
-    // 6) (Optionnel) Afficher le nom du chanteur côté Host
-    let display_name: string | null = null;
-    if (nextRow.singer_id) {
-      const { data: singer } = await db
-        .from("singers")
-        .select("display_name")
-        .eq("id", nextRow.singer_id)
-        .maybeSingle();
-      display_name = singer?.display_name ?? null;
+    // Calcul de l’ordre (R1–R5)
+    const ordering = computeOrdering({
+      waiting: (waitingRows ?? []) as Req[],
+      playing: (playingRow ?? null) as Req | null,
+      done: (doneRows ?? []) as Req[],
+    });
+
+    const next = ordering.orderedWaiting[0];
+    if (!next) {
+      return NextResponse.json({ ok: true, now_playing: null, note: "Aucun titre en attente." }, { headers: noStore });
     }
 
-    return NextResponse.json({
-      ok: true,
-      just_done: current ? { id: current.id } : null,
-      now_playing: {
-        id: nextRow.id,
-        title: nextRow.title,
-        artist: nextRow.artist,
-        display_name,
-      },
-    });
+    // Bascule le premier en "playing"
+    const { error: ePlay } = await db
+      .from("requests")
+      .update({ status: "playing", updated_at: new Date().toISOString() })
+      .eq("id", next.id);
+    if (ePlay) return NextResponse.json({ ok: false, error: ePlay.message }, { status: 500, headers: noStore });
+
+    return NextResponse.json({ ok: true, now_playing: next.id, reasons: ordering.reasons }, { headers: noStore });
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e);
-    return NextResponse.json({ ok: false, error: msg }, { status: 500 });
+    return NextResponse.json({ ok: false, error: msg }, { status: 500, headers: noStore });
   }
 }

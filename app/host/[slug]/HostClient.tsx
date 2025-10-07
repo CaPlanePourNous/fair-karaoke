@@ -14,7 +14,7 @@ type QueueResponse = {
   error?: string;
   playing: Item | null;
   waiting: Item[];
-  done: Item[];
+  done: Item[]; // l'API renvoie aussi 'played' en alias, mais on normalise côté route
 };
 
 type LotteryState = {
@@ -38,7 +38,7 @@ export default function HostClient({ slug }: { slug: string }) {
   const [lotteryBusy, setLotteryBusy] = useState(false);
   const [lotteryInfo, setLotteryInfo] = useState<LotteryState | null>(null);
 
-  // --- UI styles sobres (pas de Tailwind) ---
+  // --- Styles sobres ---
   const card: React.CSSProperties = {
     border: "1px solid #e6e6e6",
     borderRadius: 10,
@@ -69,13 +69,14 @@ export default function HostClient({ slug }: { slug: string }) {
         const txt = await r.text().catch(() => "");
         throw new Error(`GET /api/host/queue ${r.status} ${txt}`);
       }
-      const d = (await r.json()) as QueueResponse;
+      const d = (await r.json()) as any;
       return {
         ok: !!d.ok,
         error: d.error,
         playing: d.playing ?? null,
         waiting: Array.isArray(d.waiting) ? d.waiting : [],
-        done: Array.isArray(d.done) ? d.done : [],
+        // l’API renvoie 'played' et 'done' → on prend 'done'
+        done: Array.isArray(d.done) ? d.done : (Array.isArray(d.played) ? d.played : []),
       };
     } catch (e) {
       return { ok: false, error: String(e), playing: null, waiting: [], done: [] };
@@ -210,6 +211,7 @@ export default function HostClient({ slug }: { slug: string }) {
               setErr(d.ok ? null : d.error || "Erreur");
             }}
             style={btn}
+            title="Rafraîchir"
           >
             ↻
           </button>
@@ -222,7 +224,7 @@ export default function HostClient({ slug }: { slug: string }) {
         </div>
       )}
 
-      {/* En cours */}
+      {/* En cours (aucun bouton copier ici, comme demandé) */}
       <section style={{ ...card, marginBottom: 16 }}>
         <h2 style={{ marginTop: 0 }}>🎶 En cours</h2>
         {data.playing ? (
@@ -233,11 +235,6 @@ export default function HostClient({ slug }: { slug: string }) {
               {!!data.playing.display_name && (
                 <div style={{ marginTop: 4 }}>👤 {data.playing.display_name}</div>
               )}
-            </div>
-            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-              <button style={btn} onClick={() => copy(`${data.playing!.title} — ${data.playing!.artist}`)}>Copier titre+artiste</button>
-              <button style={btn} onClick={() => copy(data.playing!.title)}>Copier titre</button>
-              <button style={btn} onClick={() => copy(data.playing!.artist)}>Copier artiste</button>
             </div>
           </div>
         ) : (
@@ -252,7 +249,17 @@ export default function HostClient({ slug }: { slug: string }) {
           {Array.isArray(data.waiting) && data.waiting.length > 0 ? (
             <ol style={{ listStyle: "none", padding: 0, margin: 0 }}>
               {data.waiting.map((r, idx) => (
-                <li key={(r.id ?? idx).toString()} style={{ padding: "8px 0", borderBottom: "1px solid #f1f1f1", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+                <li
+                  key={(r.id ?? idx).toString()}
+                  style={{
+                    padding: "8px 0",
+                    borderBottom: "1px solid #f1f1f1",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                    gap: 8,
+                  }}
+                >
                   <div style={{ minWidth: 0 }}>
                     <div style={{ fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
                       {idx + 1}. {r.title}
@@ -260,11 +267,33 @@ export default function HostClient({ slug }: { slug: string }) {
                     <div style={{ opacity: 0.75 }}>{r.artist}</div>
                     {!!r.display_name && <div style={{ opacity: 0.85 }}>👤 {r.display_name}</div>}
                   </div>
+
+                  {/* Sur les 2 premiers : deux boutons copier (titre+artiste ET nom) */}
                   {idx < 2 && (
                     <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                      <button style={btn} onClick={() => copy(`${r.title} — ${r.artist}`)}>Copier titre+artiste</button>
-                      <button style={btn} onClick={() => copy(r.title)}>Copier titre</button>
-                      <button style={btn} onClick={() => copy(r.artist)}>Copier artiste</button>
+                      <button
+                        style={btn}
+                        onClick={() => copy(`${r.title} — ${r.artist}`)}
+                        title="Copier titre + artiste"
+                      >
+                        📋 Copier titre + artiste
+                      </button>
+
+                      <button
+                        style={{
+                          ...btn,
+                          cursor: r.display_name ? "pointer" : "not-allowed",
+                          opacity: r.display_name ? 1 : 0.6,
+                        }}
+                        onClick={() => {
+                          const name = (r.display_name || "").trim();
+                          if (name) copy(name);
+                        }}
+                        disabled={!r.display_name}
+                        title="Copier nom du chanteur"
+                      >
+                        📋 Copier nom
+                      </button>
                     </div>
                   )}
                 </li>
@@ -310,7 +339,11 @@ export default function HostClient({ slug }: { slug: string }) {
               <>
                 <div>Inscriptions : <strong>{lotteryInfo.entriesCount ?? "?"}</strong></div>
                 {lotteryInfo.lastWinner ? (
-                  <div>Dernier gagnant : <strong>{lotteryInfo.lastWinner.display_name || lotteryInfo.lastWinner.singer_id}</strong> ({new Date(lotteryInfo.lastWinner.created_at).toLocaleString()})</div>
+                  <div>
+                    Dernier gagnant :{" "}
+                    <strong>{lotteryInfo.lastWinner.display_name || lotteryInfo.lastWinner.singer_id}</strong>{" "}
+                    ({new Date(lotteryInfo.lastWinner.created_at).toLocaleString()})
+                  </div>
                 ) : (
                   <div>Aucun gagnant récent.</div>
                 )}

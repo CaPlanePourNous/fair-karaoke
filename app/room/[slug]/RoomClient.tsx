@@ -23,8 +23,36 @@ function loadEntryId() {
   try { return localStorage.getItem('lottery_entry_id'); } catch { return null; }
 }
 
+// Mappe les erreurs techniques → message clair pour le public
+function toUserMessage(raw: unknown): string {
+  const s = String(raw || '').toLowerCase();
+
+  if (s.includes('singers_room_name_unique')) {
+    return 'Ce nom est déjà utilisé dans cette salle. Ajoute une initiale ou choisis un autre nom.';
+  }
+  if (s.includes('lottery_entries') && s.includes('duplicate')) {
+    return 'Tu es déjà inscrit au tirage 😉';
+  }
+  if ((s.includes('duplicate key value') || s.includes('unique constraint')) && s.includes('requests')) {
+    return 'Ce titre est déjà dans la liste ou a déjà été chanté. Choisis-en un autre !';
+  }
+  if (s.includes('queue full') || s.includes('max 15') || s.includes('liste pleine')) {
+    return 'La file est pleine (≈ 15 titres / ~45 min). Réessaie un peu plus tard.';
+  }
+  if (s.includes('too fast') || s.includes('30s') || s.includes('rate limit') || s.includes('anti-spam')) {
+    return 'Doucement 🙂 Attends 30 secondes entre deux demandes.';
+  }
+  if (s.includes('foreign key') || s.includes('invalid input') || s.includes('not found')) {
+    return 'Référence invalide (salle ou chanteur introuvable). Recharge la page et réessaie.';
+  }
+  if (s.includes('failed to fetch') || s.includes('network')) {
+    return 'Problème réseau. Vérifie ta connexion et réessaie.';
+  }
+  return 'Oups… une erreur est survenue. Réessaie, ou choisis un autre titre.';
+}
+
 export default function RoomClient({ slug }: { slug: string }) {
-  const isLantignie = slug.toLowerCase() === "lantignie";
+  const isLantignie = slug.toLowerCase() === 'lantignie';
 
   const [displayName, setDisplayName] = useState('');
   const [title, setTitle] = useState('');
@@ -139,7 +167,7 @@ export default function RoomClient({ slug }: { slug: string }) {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          room_slug: slug,                 // ← passe le slug
+          room_slug: slug,
           display_name: displayName.trim(),
           title: title.trim(),
           artist: artist.trim(),
@@ -148,21 +176,43 @@ export default function RoomClient({ slug }: { slug: string }) {
       });
       const data = await r.json();
       if (!r.ok || data?.ok === false) {
-        setMsg(`Erreur: ${data?.error || 'inconnue'}`);
+        setMsg(toUserMessage(data?.error));
         return;
       }
       setMsg('Demande envoyée 👍');
       setTitle(''); setArtist(''); setKid(null);
-    } catch {
-      setMsg("Erreur réseau lors de l'envoi.");
+    } catch (e) {
+      setMsg(toUserMessage(e));
     } finally {
       setSubmitLoading(false);
     }
   }
 
   return (
-    <main style={{ maxWidth: 720, margin: "0 auto", padding: "16px" }}>
-      <h1>🎤 Karaoké – {isLantignie ? "Lantignié" : slug} 🎶</h1>
+    <main style={{ maxWidth: 720, margin: '0 auto', padding: '16px' }}>
+      <h1>🎤 Karaoké – {isLantignie ? 'Lantignié' : slug} 🎶</h1>
+
+      {/* Règles simples (courtes, utiles) */}
+      <div
+        role="note"
+        style={{
+          margin: '10px 0 16px',
+          padding: '10px 12px',
+          borderRadius: 8,
+          background: '#f6f6f6',
+          color: '#000'
+        }}
+      >
+        <div style={{ fontWeight: 600, marginBottom: 6 }}>
+          Afin que tout le monde passe une bonne soirée :
+        </div>
+        <ul style={{ margin: 0, paddingLeft: 18 }}>
+          <li>2 chansons max par chanteur à la fois.</li>
+          <li>Un titre ne peut être chanté qu’une seule fois dans la soirée.</li>
+          <li>File limitée à 15 titres (≈ 45 min).</li>
+          <li>Anti-spam : 30 s entre deux demandes.</li>
+        </ul>
+      </div>
 
       {stats && (
         <p style={{
@@ -197,7 +247,7 @@ export default function RoomClient({ slug }: { slug: string }) {
       {/* Lien de recherche directe KaraFun quand l’utilisateur tape quelque chose */}
       {q.trim().length >= 2 && (
         <p style={{ margin: '6px 0 10px', fontSize: 14, opacity: .85 }}>
-          🔎 Pas trouvé ?{" "}
+          🔎 Pas trouvé ?{' '}
           <a
             href={`https://www.karafun.fr/karaoke/search/?q=${encodeURIComponent(q.trim())}`}
             target="_blank"
@@ -243,7 +293,7 @@ export default function RoomClient({ slug }: { slug: string }) {
           opacity: limitReached || submitLoading ? .6 : 1
         }}
       >
-        {submitLoading ? "Envoi..." : "Demander"}
+        {submitLoading ? 'Envoi...' : 'Demander'}
       </button>
 
       {limitReached && (
@@ -277,27 +327,27 @@ export default function RoomClient({ slug }: { slug: string }) {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({
-                room_slug: slug,                // ← passe le slug
+                room_slug: slug,
                 display_name: displayName.trim()
               })
             });
             const d = await r.json();
-            if (!r.ok || d?.ok === false) setMsg('Erreur tirage : ' + (d?.error || 'inconnue'));
+            if (!r.ok || d?.ok === false) setMsg(toUserMessage(d?.error));
             else {
               setMsg('Inscription au tirage enregistrée ✅');
               if (d.id) saveEntryId(d.id);
             }
-          } catch {
-            setMsg('Erreur réseau (tirage).');
+          } catch (e) {
+            setMsg(toUserMessage(e));
           } finally {
             setLotteryLoading(false);
           }
         }}
-        className={isLantignie ? "neonButton" : undefined}  // ← classe globale
+        className={isLantignie ? 'neonButton' : undefined}
         style={!isLantignie ? { padding: '8px 14px', cursor: lotteryLoading ? 'wait' : 'pointer', opacity: lotteryLoading ? .7 : 1 } : undefined}
         disabled={lotteryLoading}
       >
-        {lotteryLoading ? "..." : "M’inscrire au tirage"}
+        {lotteryLoading ? '...' : 'M’inscrire au tirage'}
       </button>
 
       {!soundReady && (
@@ -314,7 +364,7 @@ export default function RoomClient({ slug }: { slug: string }) {
           style={{
             position: 'fixed',
             inset: 0,
-            background: '#16a34a', // vert franc
+            background: '#16a34a',
             color: '#fff',
             display: 'flex',
             alignItems: 'center',
@@ -332,7 +382,8 @@ export default function RoomClient({ slug }: { slug: string }) {
           <div style={{ marginTop: 16, fontSize: 14, opacity: 0.9 }}>
             Attendez que l’animateur vous fasse signe 😉
           </div>
-        </div>
+       
+
       )}
     </main>
   );

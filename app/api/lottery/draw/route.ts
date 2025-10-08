@@ -21,7 +21,7 @@ export async function POST(req: NextRequest) {
     if (eRoom)  return NextResponse.json({ ok: false, error: eRoom.message }, { status: 500 });
     if (!room)  return NextResponse.json({ ok: false, error: "ROOM_NOT_FOUND" }, { status: 404 });
 
-    // 2) On récupère TOUTES les entries et tous les winners (puis on filtre côté serveur)
+    // 2) Entries & Winners → filtrage côté serveur
     const [{ data: entries, error: eEnt }, { data: wins, error: eWins }] = await Promise.all([
       db.from("lottery_entries").select("entry_id, display_name").eq("room_id", room.id),
       db.from("lottery_winners").select("entry_id").eq("room_id", room.id),
@@ -31,7 +31,6 @@ export async function POST(req: NextRequest) {
 
     const wonSet = new Set((wins ?? []).map(w => w.entry_id as string));
     const pool = (entries ?? []).filter(e => !wonSet.has(e.entry_id as string));
-
     if (pool.length === 0) {
       return NextResponse.json({ ok: false, error: "NO_AVAILABLE_ENTRIES" }, { status: 200 });
     }
@@ -39,11 +38,11 @@ export async function POST(req: NextRequest) {
     // 3) Tirage aléatoire
     const chosen = pool[Math.floor(Math.random() * pool.length)];
 
-    // 4) INSERT winner (déclenche Realtime)
+    // 4) INSERT winner (retourne entry_id + drawn_at)
     const { data: win, error: eIns } = await db
       .from("lottery_winners")
       .insert({ room_id: room.id, entry_id: chosen.entry_id })
-      .select("entry_id, created_at")
+      .select("entry_id, drawn_at")
       .single();
     if (eIns) return NextResponse.json({ ok: false, error: eIns.message }, { status: 500 });
 
@@ -52,7 +51,7 @@ export async function POST(req: NextRequest) {
       winner: {
         entry_id: win.entry_id,
         display_name: chosen.display_name ?? null,
-        created_at: win.created_at,
+        created_at: win.drawn_at, // ← pour coller à l’attente du Host
       },
     });
   } catch (e: unknown) {

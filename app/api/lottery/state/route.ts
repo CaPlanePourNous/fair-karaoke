@@ -20,10 +20,10 @@ export async function GET(req: NextRequest) {
     if (eRoom)  return NextResponse.json({ ok: false, error: eRoom.message }, { status: 500 });
     if (!room)  return NextResponse.json({ ok: false, error: "ROOM_NOT_FOUND" }, { status: 404 });
 
-    // 2) Entries & Winners → compute entriesCount (éligibles)
+    // 2) Entries & Winners
     const [{ data: entries, error: eEnt }, { data: wins, error: eWins }] = await Promise.all([
       db.from("lottery_entries").select("entry_id").eq("room_id", room.id),
-      db.from("lottery_winners").select("entry_id, created_at").eq("room_id", room.id),
+      db.from("lottery_winners").select("entry_id, drawn_at").eq("room_id", room.id),
     ]);
     if (eEnt)  return NextResponse.json({ ok: false, error: eEnt.message }, { status: 500 });
     if (eWins) return NextResponse.json({ ok: false, error: eWins.message }, { status: 500 });
@@ -31,11 +31,13 @@ export async function GET(req: NextRequest) {
     const wonSet = new Set((wins ?? []).map(w => w.entry_id as string));
     const entriesCount = (entries ?? []).filter(e => !wonSet.has(e.entry_id as string)).length;
 
-    // 3) Last winner (2 requêtes, pas d’embed ambigu)
+    // 3) Dernier gagnant (ordonner par drawn_at)
     let lastWinner: { singer_id: string; display_name?: string | null; created_at: string } | undefined = undefined;
 
-    // trouver le dernier winner (par date)
-    const last = (wins ?? []).toSorted((a: any, b: any) => (a.created_at < b.created_at ? 1 : -1))[0];
+    const last = (wins ?? [])
+      .filter((w: any) => !!w.drawn_at)
+      .toSorted((a: any, b: any) => (a.drawn_at < b.drawn_at ? 1 : -1))[0];
+
     if (last) {
       const { data: le, error: eLE } = await db
         .from("lottery_entries")
@@ -47,7 +49,7 @@ export async function GET(req: NextRequest) {
       lastWinner = {
         singer_id: (le?.singer_id as string) || "",
         display_name: le?.display_name ?? null,
-        created_at: last.created_at as string,
+        created_at: last.drawn_at as string, // ← on renvoie sous le nom attendu
       };
     }
 

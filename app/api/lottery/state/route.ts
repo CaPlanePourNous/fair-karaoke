@@ -11,7 +11,7 @@ export async function GET(req: NextRequest) {
 
     const db = createAdminSupabaseClient();
 
-    // Room
+    // 1) Room
     const { data: room, error: eRoom } = await db
       .from("rooms")
       .select("id")
@@ -20,40 +20,34 @@ export async function GET(req: NextRequest) {
     if (eRoom)  return NextResponse.json({ ok: false, error: eRoom.message }, { status: 500 });
     if (!room)  return NextResponse.json({ ok: false, error: "ROOM_NOT_FOUND" }, { status: 404 });
 
-    // Count des inscrits éligibles (non gagnants)
-    // On calcule via left join NOT EXISTS pour éviter les sous-requêtes multiples côté client.
-    const { data: eligibles, error: eElig } = await db
-      .from("lottery_entries")
-      .select("entry_id")
-      .eq("room_id", room.id);
-    if (eElig) return NextResponse.json({ ok: false, error: eElig.message }, { status: 500 });
+    // 2) Entries & Winners → compute entriesCount (éligibles)
+    const [{ data: entries, error: eEnt }, { data: wins, error: eWins }] = await Promise.all([
+      db.from("lottery_entries").select("entry_id").eq("room_id", room.id),
+      db.from("lottery_winners").select("entry_id, created_at").eq("room_id", room.id),
+    ]);
+    if (eEnt)  return NextResponse.json({ ok: false, error: eEnt.message }, { status: 500 });
+    if (eWins) return NextResponse.json({ ok: false, error: eWins.message }, { status: 500 });
 
-    const { data: alreadyWon, error: eWon } = await db
-      .from("lottery_winners")
-      .select("entry_id")
-      .eq("room_id", room.id);
-    if (eWon) return NextResponse.json({ ok: false, error: eWon.message }, { status: 500 });
+    const wonSet = new Set((wins ?? []).map(w => w.entry_id as string));
+    const entriesCount = (entries ?? []).filter(e => !wonSet.has(e.entry_id as string)).length;
 
-    const wonSet = new Set((alreadyWon ?? []).map(w => w.entry_id as string));
-    const entriesCount = (eligibles ?? []).filter(e => !wonSet.has(e.entry_id as string)).length;
+    // 3) Last winner (2 requêtes, pas d’embed ambigu)
+    let lastWinner: { singer_id: string; display_name?: string | null; created_at: string } | undefined = undefined;
 
-    // Dernier gagnant (avec display_name)
-    // On joint winners -> entries (l’entrée n’étant plus supprimée)
-    const { data: last, error: eLast } = await db
-      .from("lottery_winners")
-      .select("created_at, entry_id, lottery_entries!inner(display_name, singer_id)")
-      .eq("room_id", room.id)
-      .order("created_at", { ascending: false })
-      .limit(1);
-    if (eLast) return NextResponse.json({ ok: false, error: eLast.message }, { status: 500 });
+    // trouver le dernier winner (par date)
+    const last = (wins ?? []).toSorted((a: any, b: any) => (a.created_at < b.created_at ? 1 : -1))[0];
+    if (last) {
+      const { data: le, error: eLE } = await db
+        .from("lottery_entries")
+        .select("singer_id, display_name")
+        .eq("entry_id", last.entry_id)
+        .maybeSingle();
+      if (eLE) return NextResponse.json({ ok: false, error: eLE.message }, { status: 500 });
 
-    let lastWinner: { singer_id: string; created_at: string; display_name?: string | null } | undefined = undefined;
-    if (Array.isArray(last) && last.length > 0) {
-      const w = last[0] as any;
       lastWinner = {
-        singer_id: w?.lottery_entries?.singer_id ?? "",
-        display_name: w?.lottery_entries?.display_name ?? null,
-        created_at: w?.created_at,
+        singer_id: (le?.singer_id as string) || "",
+        display_name: le?.display_name ?? null,
+        created_at: last.created_at as string,
       };
     }
 

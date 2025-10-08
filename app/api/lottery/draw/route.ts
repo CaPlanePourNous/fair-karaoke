@@ -12,7 +12,7 @@ export async function POST(req: NextRequest) {
 
     const db = createAdminSupabaseClient();
 
-    // Room
+    // 1) Room
     const { data: room, error: eRoom } = await db
       .from("rooms")
       .select("id")
@@ -21,26 +21,25 @@ export async function POST(req: NextRequest) {
     if (eRoom)  return NextResponse.json({ ok: false, error: eRoom.message }, { status: 500 });
     if (!room)  return NextResponse.json({ ok: false, error: "ROOM_NOT_FOUND" }, { status: 404 });
 
-    // Candidat aléatoire : entries sans winner
-    const { data: candidates, error: ePick } = await db
-      .from("lottery_entries")
-      .select("entry_id, display_name")
-      .eq("room_id", room.id)
-      .not("entry_id", "in", (
-        await db.from("lottery_winners").select("entry_id").eq("room_id", room.id)
-      ).data?.map(w => w.entry_id as string) ?? [])
-      ;
+    // 2) On récupère TOUTES les entries et tous les winners (puis on filtre côté serveur)
+    const [{ data: entries, error: eEnt }, { data: wins, error: eWins }] = await Promise.all([
+      db.from("lottery_entries").select("entry_id, display_name").eq("room_id", room.id),
+      db.from("lottery_winners").select("entry_id").eq("room_id", room.id),
+    ]);
+    if (eEnt)  return NextResponse.json({ ok: false, error: eEnt.message }, { status: 500 });
+    if (eWins) return NextResponse.json({ ok: false, error: eWins.message }, { status: 500 });
 
-    if (ePick) return NextResponse.json({ ok: false, error: ePick.message }, { status: 500 });
+    const wonSet = new Set((wins ?? []).map(w => w.entry_id as string));
+    const pool = (entries ?? []).filter(e => !wonSet.has(e.entry_id as string));
 
-    const pool = Array.isArray(candidates) ? candidates : [];
     if (pool.length === 0) {
       return NextResponse.json({ ok: false, error: "NO_AVAILABLE_ENTRIES" }, { status: 200 });
     }
 
+    // 3) Tirage aléatoire
     const chosen = pool[Math.floor(Math.random() * pool.length)];
 
-    // Insérer le gagnant (déclenche Realtime)
+    // 4) INSERT winner (déclenche Realtime)
     const { data: win, error: eIns } = await db
       .from("lottery_winners")
       .insert({ room_id: room.id, entry_id: chosen.entry_id })

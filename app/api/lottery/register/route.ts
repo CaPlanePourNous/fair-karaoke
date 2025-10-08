@@ -8,7 +8,7 @@ const noStore = {
   "Cache-Control": "no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0, s-maxage=0",
 };
 
-// Essaie de déduire room_slug depuis le Referer (/room/<slug>) au cas où
+// Déduit /room/<slug> depuis le Referer si besoin
 function inferRoomSlug(req: NextRequest): string | null {
   const ref = req.headers.get("referer") || "";
   try {
@@ -38,7 +38,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Résoudre room_id (priorité: room_id > room_slug > Referer)
+    // Résoudre room_id: room_id > room_slug > Referer
     let room_id = (body.room_id || "").trim();
     if (!room_id) {
       const slug = (body.room_slug || inferRoomSlug(req) || "").trim();
@@ -69,12 +69,12 @@ export async function POST(req: NextRequest) {
       room_id = room.id as string;
     }
 
-    // 1) Trouver ou créer le singer (unicité par room_id + nom)
+    // 1) Trouver ou créer le singer (unicité simple par room_id + display_name)
     const { data: existingSinger, error: selSingerErr } = await db
       .from("singers")
       .select("id")
       .eq("room_id", room_id)
-      .eq("display_name", display_name) // simple et suffisant
+      .eq("display_name", display_name)
       .maybeSingle();
 
     if (selSingerErr) {
@@ -91,7 +91,7 @@ export async function POST(req: NextRequest) {
         .from("singers")
         .insert({ room_id, display_name })
         .select("id")
-        .single(); // EXIGER une ligne
+        .single(); // on exige une ligne
 
       if (insSingerErr || !createdSinger?.id) {
         return NextResponse.json(
@@ -102,32 +102,32 @@ export async function POST(req: NextRequest) {
       singer_id = createdSinger.id as string;
     }
 
-    // 2) Inscrire dans la loterie (unicité (room_id, singer_id) côté DB)
+    // 2) Inscrire dans la loterie
+    //    ⚠️ ICI on sélectionne 'entry_id' (et pas 'id')
     const { data: entry, error: entryErr } = await db
       .from("lottery_entries")
-      .insert({ room_id, singer_id })
-      .select("id")
-      .single(); // EXIGER une ligne
+      .insert({ room_id, singer_id, display_name })
+      .select("entry_id")
+      .single();
 
     if (entryErr) {
-      // Conflit d'unicité => déjà inscrit : on relit l'id et on renvoie OK
+      // Conflit d’unicité → déjà inscrit : on relit l'entry_id
       if ((entryErr as any)?.code === "23505") {
         const { data: existingEntry, error: findErr } = await db
           .from("lottery_entries")
-          .select("id")
+          .select("entry_id")
           .eq("room_id", room_id)
           .eq("singer_id", singer_id!)
           .single();
 
-        if (findErr || !existingEntry?.id) {
+        if (findErr || !existingEntry?.entry_id) {
           return NextResponse.json(
             { ok: false, error: findErr?.message || "DB_SELECT_ENTRY_FAILED" },
             { status: 500, headers: noStore }
           );
         }
-
         return NextResponse.json(
-          { ok: true, id: existingEntry.id, note: "already_registered" },
+          { ok: true, id: existingEntry.entry_id, note: "already_registered" },
           { headers: noStore }
         );
       }
@@ -138,15 +138,15 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Sécurité : ne JAMAIS renvoyer OK sans id
-    if (!entry?.id) {
+    if (!entry?.entry_id) {
       return NextResponse.json(
         { ok: false, error: "DB_INSERT_ENTRY_NO_ID" },
         { status: 500, headers: noStore }
       );
     }
 
-    return NextResponse.json({ ok: true, id: entry.id }, { headers: noStore });
+    // Réponse stable: on renvoie 'id' = entry_id (pour le client)
+    return NextResponse.json({ ok: true, id: entry.entry_id }, { headers: noStore });
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e);
     return NextResponse.json({ ok: false, error: msg }, { status: 500, headers: noStore });

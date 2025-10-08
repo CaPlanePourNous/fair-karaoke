@@ -254,10 +254,11 @@ export default function RoomClient({ slug }: { slug: string }) {
         </p>
       )}
 	<div className="flex items-center gap-2">
-  <span>Demandes: {requestsCount}</span>
+  <span>
+    Demandes : <strong>{stats?.total_waiting ?? 0}</strong>
+  </span>
   <RoomQueueModal slug={slug} />
 </div>
-
       <label>Nom ou Surnom</label>
       <input
         value={displayName}

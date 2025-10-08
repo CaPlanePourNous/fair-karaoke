@@ -1,66 +1,27 @@
-// app/api/lottery/stats/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { createAdminSupabaseClient } from "@/lib/supabaseServer";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-const noStore = {
-  "Cache-Control":
-    "no-store, no-cache, must-revalidate, max-age=0, s-maxage=0, proxy-revalidate",
-};
-
 export async function GET(req: NextRequest) {
   try {
-    const { searchParams } = new URL(req.url);
-    const roomSlug = (searchParams.get("room_slug") || "").trim();
-    const roomIdParam = (searchParams.get("room_id") || "").trim();
-
-    // Bornes [aujourd’hui 00:00 → demain 00:00) en local (simple et suffisant ici)
-    const start = new Date();
-    start.setHours(0, 0, 0, 0);
-    const end = new Date(start);
-    end.setDate(start.getDate() + 1);
+    const slug = req.nextUrl.searchParams.get("room_slug")?.trim();
+    if (!slug) return NextResponse.json({ ok: false, error: "MISSING_ROOM_SLUG" }, { status: 400 });
 
     const db = createAdminSupabaseClient();
+    const { data: room, error: eRoom } = await db.from("rooms").select("id").eq("slug", slug).maybeSingle();
+    if (eRoom)  return NextResponse.json({ ok: false, error: eRoom.message }, { status: 500 });
+    if (!room)  return NextResponse.json({ ok: false, error: "ROOM_NOT_FOUND" }, { status: 404 });
 
-    // Résoudre la room si fournie
-    let roomId = roomIdParam;
-    if (!roomId && roomSlug) {
-      const { data: room, error: eRoom } = await db
-        .from("rooms")
-        .select("id")
-        .eq("slug", roomSlug)
-        .maybeSingle();
-      if (eRoom) {
-        return NextResponse.json({ ok: false, error: eRoom.message }, { status: 500, headers: noStore });
-      }
-      if (!room) {
-        return NextResponse.json({ ok: false, error: "Room inconnue" }, { status: 404, headers: noStore });
-      }
-      roomId = room.id as string;
-    }
+    const [{ count: cEntries }, { count: cWinners }] = await Promise.all([
+      db.from("lottery_entries").select("*", { count: "exact", head: true }).eq("room_id", room.id),
+      db.from("lottery_winners").select("*", { count: "exact", head: true }).eq("room_id", room.id),
+    ]);
 
-    // Compter les inscriptions du jour (optionnellement filtrées par room)
-    let q = db
-      .from("lottery_entries")
-      .select("*", { head: true, count: "exact" })
-      .gte("created_at", start.toISOString())
-      .lt("created_at", end.toISOString());
-
-    if (roomId) q = q.eq("room_id", roomId);
-
-    const { count, error } = await q;
-    if (error) {
-      return NextResponse.json({ ok: false, error: error.message }, { status: 500, headers: noStore });
-    }
-
-    return NextResponse.json(
-      { ok: true, count: count ?? 0, room_id: roomId || null },
-      { headers: noStore }
-    );
+    return NextResponse.json({ ok: true, stats: { entries: cEntries ?? 0, winners: cWinners ?? 0 } });
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e);
-    return NextResponse.json({ ok: false, error: msg }, { status: 500, headers: noStore });
+    return NextResponse.json({ ok: false, error: msg }, { status: 500 });
   }
 }

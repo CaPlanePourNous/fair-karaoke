@@ -1,67 +1,29 @@
-// app/api/lottery/clear/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { createAdminSupabaseClient } from "@/lib/supabaseServer";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-/**
- * Supprime le gagnant lié à une entry (et optionnellement restreint à une room).
- * Body: { entry_id: string, room_slug?: string }
- * Réponse: { ok: true, deleted: number } | { ok: false, error }
- */
 export async function POST(req: NextRequest) {
   try {
-    const { entry_id, room_slug } = (await req.json().catch(() => ({}))) as {
-      entry_id?: string;
-      room_slug?: string;
-    };
-
-    const id = (entry_id || "").trim();
-    if (!id) {
-      return NextResponse.json(
-        { ok: false, error: "entry_id manquant" },
-        { status: 400 }
-      );
-    }
+    const { room_slug } = (await req.json().catch(() => ({}))) as { room_slug?: string };
+    const slug = (room_slug || "").trim();
+    if (!slug) return NextResponse.json({ ok: false, error: "MISSING_ROOM_SLUG" }, { status: 400 });
 
     const db = createAdminSupabaseClient();
+    const { data: room, error: eRoom } = await db.from("rooms").select("id").eq("slug", slug).maybeSingle();
+    if (eRoom)  return NextResponse.json({ ok: false, error: eRoom.message }, { status: 500 });
+    if (!room)  return NextResponse.json({ ok: false, error: "ROOM_NOT_FOUND" }, { status: 404 });
 
-    // Si on fournit room_slug, on restreint la suppression à cette room
-    let query = db.from("lottery_winners").delete().eq("entry_id", id);
+    // Supprimer d'abord winners (FK), puis entries
+    const [{ error: eW }, { error: eE }] = await Promise.all([
+      db.from("lottery_winners").delete().eq("room_id", room.id),
+      db.from("lottery_entries").delete().eq("room_id", room.id),
+    ]);
+    if (eW) return NextResponse.json({ ok: false, error: eW.message }, { status: 500 });
+    if (eE) return NextResponse.json({ ok: false, error: eE.message }, { status: 500 });
 
-    if (room_slug && room_slug.trim()) {
-      const { data: room, error: eRoom } = await db
-        .from("rooms")
-        .select("id")
-        .eq("slug", room_slug.trim())
-        .maybeSingle();
-      if (eRoom)
-        return NextResponse.json(
-          { ok: false, error: eRoom.message },
-          { status: 500 }
-        );
-      if (!room)
-        return NextResponse.json(
-          { ok: false, error: "Room inconnue" },
-          { status: 404 }
-        );
-
-      query = db
-        .from("lottery_winners")
-        .delete()
-        .eq("entry_id", id)
-        .eq("room_id", room.id);
-    }
-
-    // Récupérer combien de lignes supprimées
-    const { data, error } = await query.select("id");
-    if (error) {
-      return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
-    }
-
-    const deleted = Array.isArray(data) ? data.length : 0;
-    return NextResponse.json({ ok: true, deleted });
+    return NextResponse.json({ ok: true });
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e);
     return NextResponse.json({ ok: false, error: msg }, { status: 500 });

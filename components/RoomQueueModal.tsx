@@ -19,9 +19,11 @@ const supabase = createClient(
 export function RoomQueueModal({
   slug,
   triggerClassName,
+  label = "Voir la file",
 }: {
   slug: string;
   triggerClassName?: string;
+  label?: string;
 }) {
   const [open, setOpen] = useState(false);
   const [items, setItems] = useState<QItem[]>([]);
@@ -38,7 +40,7 @@ export function RoomQueueModal({
         throw new Error(j?.error || 'LOAD_QUEUE_FAILED');
       }
       setItems(j.items as QItem[]);
-    } catch (e:any) {
+    } catch (e: any) {
       setErr(e.message || 'Erreur de chargement');
     } finally {
       setLoading(false);
@@ -77,7 +79,7 @@ export function RoomQueueModal({
         onClick={() => setOpen(true)}
         aria-haspopup="dialog"
       >
-        Voir la file
+        {label}
       </button>
 
       {open && (
@@ -101,7 +103,7 @@ export function RoomQueueModal({
               )}
 
               <ul className="space-y-2">
-                {queue.map((q, i) => (
+                {queue.map((q) => (
                   <li
                     key={q.id}
                     className={`rounded-lg border p-3 ${q.is_playing ? 'bg-green-50 border-green-300' : 'bg-gray-50'}`}

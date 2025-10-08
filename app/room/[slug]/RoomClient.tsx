@@ -29,17 +29,12 @@ function loadEntryId() {
 function toUserMessage(raw: unknown): string {
   const s = String(raw || '').toLowerCase();
 
-  // Doublon de nom dans la salle
   if (s.includes('singers_room_name_unique')) {
     return "Ce nom est déjà utilisé ici. Ajoute une initiale ou choisis un autre nom.";
   }
-
-  // Doublon d’inscription au tirage
   if (s.includes('lottery_entries') && s.includes('duplicate')) {
     return "Tu es déjà inscrit au tirage 😉";
   }
-
-  // Doublon de chanson (inclut “déjà chanté ce soir”)
   if (
     s.includes('duplicate key value') ||
     s.includes('unique constraint') ||
@@ -48,32 +43,21 @@ function toUserMessage(raw: unknown): string {
   ) {
     return "Ce titre est déjà dans la liste ou a déjà été chanté ce soir. Choisis-en un autre.";
   }
-
-  // Limite de file
-  if (s.includes('file d’attente pleine') || s.includes('file pleine') || s.includes('max 15')) {
+  if (s.includes('file pleine') || s.includes('max 15')) {
     return "La file est pleine (≈15 titres / ~45 min). Réessaie un peu plus tard.";
   }
-
-  // R1 : 2 chansons max par chanteur
   if (s.includes('2 chansons max')) {
     return "Tu as déjà 2 chansons en file. Attends qu’une passe avant d’en proposer une autre.";
   }
-
-  // Anti-spam IP (30s)
-  if (s.includes('30s') || s.includes('anti-spam') || s.includes('rate limit') || s.includes('too fast')) {
+  if (s.includes('30s') || s.includes('rate limit')) {
     return "Doucement 🙂 Attends 30 secondes avant d’envoyer une nouvelle demande.";
   }
-
-  // Références invalides
-  if (s.includes('foreign key') || s.includes('salle inconnue') || s.includes('not found')) {
+  if (s.includes('foreign key') || s.includes('not found')) {
     return "Salle ou chanteur introuvable. Recharge la page puis réessaie.";
   }
-
-  // Réseau
   if (s.includes('failed to fetch') || s.includes('network')) {
     return "Problème réseau. Vérifie ta connexion et réessaie.";
   }
-
   return "Oups… une erreur est survenue. Réessaie, ou choisis un autre titre.";
 }
 
@@ -87,11 +71,10 @@ export default function RoomClient({ slug }: { slug: string }) {
   const [msg, setMsg] = useState<string | null>(null);
   const [won, setWon] = useState(false);
 
-  // états de chargement
   const [submitLoading, setSubmitLoading] = useState(false);
   const [lotteryLoading, setLotteryLoading] = useState(false);
 
-  // ------ Stats d’attente ------
+  // --- Stats d’attente
   const [stats, setStats] = useState<{ total_waiting: number; est_minutes: number } | null>(null);
   useEffect(() => {
     async function load() {
@@ -106,7 +89,7 @@ export default function RoomClient({ slug }: { slug: string }) {
   const limitReached =
     (stats?.total_waiting ?? 0) >= 15 || (stats?.est_minutes ?? 0) > 45;
 
-  // ------ Auto-complétion catalogue ------
+  // --- Recherche catalogue
   const [q, setQ] = useState('');
   const [list, setList] = useState<Suggestion[]>([]);
   useEffect(() => {
@@ -129,7 +112,7 @@ export default function RoomClient({ slug }: { slug: string }) {
     setMsg(null);
   }
 
-  // ------ Son (alerte tirage) ------
+  // --- Son (alerte tirage)
   const [soundReady, setSoundReady] = useState(false);
   const [ding, setDing] = useState<HTMLAudioElement | null>(null);
   function armSound() {
@@ -140,7 +123,7 @@ export default function RoomClient({ slug }: { slug: string }) {
     setMsg('Son activé ✅');
   }
 
-  // ------ Tirage : écoute Realtime ------
+  // --- Tirage : Realtime
   useEffect(() => {
     const entryId = loadEntryId();
     if (!entryId) return;
@@ -160,7 +143,7 @@ export default function RoomClient({ slug }: { slug: string }) {
     return () => { supa.removeChannel(ch); };
   }, [ding]);
 
-  // Fallback polling (si Realtime HS)
+  // --- Polling de secours
   useEffect(() => {
     const entryId = loadEntryId();
     if (!entryId) return;
@@ -180,7 +163,7 @@ export default function RoomClient({ slug }: { slug: string }) {
     return () => clearInterval(it);
   }, [ding, won]);
 
-  // ------ Envoi d’une demande ------
+  // --- Envoi demande chanson
   async function submit() {
     if (submitLoading) return;
     setSubmitLoading(true);
@@ -219,7 +202,7 @@ export default function RoomClient({ slug }: { slug: string }) {
     <main style={{ maxWidth: 720, margin: '0 auto', padding: '16px' }}>
       <h1>🎤 Karaoké – {isLantignie ? 'Lantignié' : slug} </h1>
 
-      {/* Règles de fonctionnement (courtes, positives) */}
+      {/* Règles */}
       <div
         role="note"
         style={{
@@ -241,24 +224,31 @@ export default function RoomClient({ slug }: { slug: string }) {
         </ul>
       </div>
 
+      {/* En attente + bouton Voir la file */}
       {stats && (
-        <p style={{
-          margin: '8px 0 16px',
-          padding: '8px 12px',
-          background: '#f6f6f6',
-          borderRadius: 8,
-          color: '#000'
-        }}>
-          En attente : <strong>{stats.total_waiting}</strong> • Estimation ≈ <strong>{stats.est_minutes} min</strong>
-          {limitReached && <span style={{ color: '#b00', marginLeft: 8 }}> (liste pleine)</span>}
-        </p>
+        <div
+          className="flex items-center justify-between gap-2 px-3 py-2 bg-gray-100 rounded-md border text-sm shadow-sm"
+          style={{ margin: '8px 0 16px' }}
+        >
+          <div>
+            En attente : <strong>{stats.total_waiting}</strong> • Estimation ≈{' '}
+            <strong>{stats.est_minutes} min</strong>
+            {limitReached && (
+              <span style={{ color: '#b00', marginLeft: 8 }}> (liste pleine)</span>
+            )}
+          </div>
+          {/* Bouton "Voir la file" même style que le cadre */}
+          <div className="flex items-center">
+            <RoomQueueModal
+              slug={slug}
+              triggerClassName="px-2 py-1 rounded-md border text-sm bg-white shadow-sm"
+              label="Voir la file"
+            />
+          </div>
+        </div>
       )}
-	<div className="flex items-center gap-2">
-  <span>
-    Demandes : <strong>{stats?.total_waiting ?? 0}</strong>
-  </span>
-  <RoomQueueModal slug={slug} />
-</div>
+
+      {/* Formulaire d’ajout chanson */}
       <label>Nom ou Surnom</label>
       <input
         value={displayName}
@@ -276,7 +266,6 @@ export default function RoomClient({ slug }: { slug: string }) {
         style={{ width: '100%', padding: 8, margin: '6px 0 6px' }}
       />
 
-      {/* Lien de recherche directe KaraFun quand l’utilisateur tape quelque chose */}
       {q.trim().length >= 2 && (
         <p style={{ margin: '6px 0 10px', fontSize: 14, opacity: .85 }}>
           🔎 Pas trouvé ?{' '}
@@ -346,56 +335,48 @@ export default function RoomClient({ slug }: { slug: string }) {
       <h2>🎁 Tirage au sort</h2>
       <p>Inscris ton nom pour participer (une inscription par personne).</p>
 
-     <button
-  onClick={async () => {
-    if (lotteryLoading) return;
-
-    const name = displayName.trim();
-    if (!name) {
-      setMsg("Renseigne ton nom avant de t’inscrire au tirage.");
-      return;
-    }
-
-    setLotteryLoading(true);
-    try {
-      const r = await fetch('/api/lottery/register', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ room_slug: slug, display_name: name }),
-      });
-
-      let d: any = null;
-      try { d = await r.json(); } catch {}
-
-      const ok = r.ok && d?.ok === true && typeof d?.id === 'string';
-      if (!ok) {
-        const code = d?.error || 'REGISTER_FAILED';
-        // mapping spécifique loterie (PAS le message “titre”)
-        const map: Record<string, string> = {
-          MISSING_DISPLAY_NAME: "Renseigne ton nom avant de t’inscrire.",
-          ROOM_NOT_FOUND: "Salle introuvable.",
-          DB_INSERT_SINGER_FAILED: "Inscription impossible (création du profil).",
-          DB_INSERT_ENTRY_NO_ID: "Inscription impossible (ID absent).",
-          REGISTER_FAILED: "Inscription impossible.",
-        };
-        setMsg(map[code] ?? `Inscription impossible: ${code}`);
-        return;
-      }
-
-      // succès réel => on a un id
-      localStorage.setItem('lottery_entry_id', d.id);
-      setMsg('Inscription au tirage enregistrée ✅');
-    } catch (e: any) {
-      setMsg('Réseau indisponible. Réessaie.');
-    } finally {
-      setLotteryLoading(false);
-    }
-  }}
-  disabled={lotteryLoading}
->
-  {lotteryLoading ? '...' : 'M’inscrire au tirage'}
-</button>
-
+      <button
+        onClick={async () => {
+          if (lotteryLoading) return;
+          const name = displayName.trim();
+          if (!name) {
+            setMsg("Renseigne ton nom avant de t’inscrire au tirage.");
+            return;
+          }
+          setLotteryLoading(true);
+          try {
+            const r = await fetch('/api/lottery/register', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ room_slug: slug, display_name: name }),
+            });
+            let d: any = null;
+            try { d = await r.json(); } catch {}
+            const ok = r.ok && d?.ok === true && typeof d?.id === 'string';
+            if (!ok) {
+              const code = d?.error || 'REGISTER_FAILED';
+              const map: Record<string, string> = {
+                MISSING_DISPLAY_NAME: "Renseigne ton nom avant de t’inscrire.",
+                ROOM_NOT_FOUND: "Salle introuvable.",
+                DB_INSERT_SINGER_FAILED: "Inscription impossible (création du profil).",
+                DB_INSERT_ENTRY_NO_ID: "Inscription impossible (ID absent).",
+                REGISTER_FAILED: "Inscription impossible.",
+              };
+              setMsg(map[code] ?? `Inscription impossible: ${code}`);
+              return;
+            }
+            localStorage.setItem('lottery_entry_id', d.id);
+            setMsg('Inscription au tirage enregistrée ✅');
+          } catch {
+            setMsg('Réseau indisponible. Réessaie.');
+          } finally {
+            setLotteryLoading(false);
+          }
+        }}
+        disabled={lotteryLoading}
+      >
+        {lotteryLoading ? '...' : 'M’inscrire au tirage'}
+      </button>
 
       {!soundReady && (
         <p style={{ marginTop: 8 }}>

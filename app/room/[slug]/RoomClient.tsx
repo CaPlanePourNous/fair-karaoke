@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { createClient } from '@supabase/supabase-js';
+import { RoomQueueModal } from '@/components/RoomQueueModal';
 
 type Suggestion = {
   title: string;
@@ -216,7 +217,7 @@ export default function RoomClient({ slug }: { slug: string }) {
 
   return (
     <main style={{ maxWidth: 720, margin: '0 auto', padding: '16px' }}>
-      <h1>🎤 Karaoké – {isLantignie ? 'Lantignié' : slug} 🎶</h1>
+      <h1>🎤 Karaoké – {isLantignie ? 'Lantignié' : slug} </h1>
 
       {/* Règles de fonctionnement (courtes, positives) */}
       <div
@@ -252,6 +253,10 @@ export default function RoomClient({ slug }: { slug: string }) {
           {limitReached && <span style={{ color: '#b00', marginLeft: 8 }}> (liste pleine)</span>}
         </p>
       )}
+	<div className="flex items-center gap-2">
+  <span>Demandes: {requestsCount}</span>
+  <RoomQueueModal slug={slug} />
+</div>
 
       <label>Nom ou Surnom</label>
       <input

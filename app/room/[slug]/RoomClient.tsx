@@ -340,47 +340,56 @@ export default function RoomClient({ slug }: { slug: string }) {
       <h2>🎁 Tirage au sort</h2>
       <p>Inscris ton nom pour participer (une inscription par personne).</p>
 
-      <button
+     <button
   onClick={async () => {
     if (lotteryLoading) return;
-    if (!displayName.trim()) {
-      setMsg('Renseigne ton nom avant de t’inscrire au tirage.');
+
+    const name = displayName.trim();
+    if (!name) {
+      setMsg("Renseigne ton nom avant de t’inscrire au tirage.");
       return;
     }
+
     setLotteryLoading(true);
     try {
       const r = await fetch('/api/lottery/register', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          room_slug: slug,
-          display_name: displayName.trim(),
-        }),
+        body: JSON.stringify({ room_slug: slug, display_name: name }),
       });
+
       let d: any = null;
       try { d = await r.json(); } catch {}
-      const ok = r.ok && d?.ok === true && typeof d?.id === 'string';
 
+      const ok = r.ok && d?.ok === true && typeof d?.id === 'string';
       if (!ok) {
-        const err = d?.error || 'REGISTER_FAILED';
-        setMsg(toUserMessage(err));
+        const code = d?.error || 'REGISTER_FAILED';
+        // mapping spécifique loterie (PAS le message “titre”)
+        const map: Record<string, string> = {
+          MISSING_DISPLAY_NAME: "Renseigne ton nom avant de t’inscrire.",
+          ROOM_NOT_FOUND: "Salle introuvable.",
+          DB_INSERT_SINGER_FAILED: "Inscription impossible (création du profil).",
+          DB_INSERT_ENTRY_NO_ID: "Inscription impossible (ID absent).",
+          REGISTER_FAILED: "Inscription impossible.",
+        };
+        setMsg(map[code] ?? `Inscription impossible: ${code}`);
         return;
       }
 
-      saveEntryId(d.id);
+      // succès réel => on a un id
+      localStorage.setItem('lottery_entry_id', d.id);
       setMsg('Inscription au tirage enregistrée ✅');
-    } catch (e) {
-      setMsg(toUserMessage(e));
+    } catch (e: any) {
+      setMsg('Réseau indisponible. Réessaie.');
     } finally {
       setLotteryLoading(false);
     }
   }}
-  className={isLantignie ? 'neonButton' : undefined}
-  style={!isLantignie ? { padding: '8px 14px', cursor: lotteryLoading ? 'wait' : 'pointer', opacity: lotteryLoading ? .7 : 1 } : undefined}
   disabled={lotteryLoading}
 >
   {lotteryLoading ? '...' : 'M’inscrire au tirage'}
 </button>
+
 
       {!soundReady && (
         <p style={{ marginTop: 8 }}>

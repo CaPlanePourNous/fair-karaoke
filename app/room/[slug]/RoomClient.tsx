@@ -341,40 +341,46 @@ export default function RoomClient({ slug }: { slug: string }) {
       <p>Inscris ton nom pour participer (une inscription par personne).</p>
 
       <button
-        onClick={async () => {
-          if (lotteryLoading) return;
-          if (!displayName.trim()) {
-            setMsg('Renseigne ton nom avant de t’inscrire au tirage.');
-            return;
-          }
-          setLotteryLoading(true);
-          try {
-            const r = await fetch('/api/lottery/register', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                room_slug: slug,
-                display_name: displayName.trim(),
-              }),
-            });
-            const d = await r.json();
-            if (!r.ok || d?.ok === false) setMsg(toUserMessage(d?.error));
-            else {
-              setMsg('Inscription au tirage enregistrée ✅');
-              if (d.id) saveEntryId(d.id);
-            }
-          } catch (e) {
-            setMsg(toUserMessage(e));
-          } finally {
-            setLotteryLoading(false);
-          }
-        }}
-        className={isLantignie ? 'neonButton' : undefined} // classe globale éventuelle
-        style={!isLantignie ? { padding: '8px 14px', cursor: lotteryLoading ? 'wait' : 'pointer', opacity: lotteryLoading ? .7 : 1 } : undefined}
-        disabled={lotteryLoading}
-      >
-        {lotteryLoading ? '...' : 'M’inscrire au tirage'}
-      </button>
+  onClick={async () => {
+    if (lotteryLoading) return;
+    if (!displayName.trim()) {
+      setMsg('Renseigne ton nom avant de t’inscrire au tirage.');
+      return;
+    }
+    setLotteryLoading(true);
+    try {
+      const r = await fetch('/api/lottery/register', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          room_slug: slug,
+          display_name: displayName.trim(),
+        }),
+      });
+      let d: any = null;
+      try { d = await r.json(); } catch {}
+      const ok = r.ok && d?.ok === true && typeof d?.id === 'string';
+
+      if (!ok) {
+        const err = d?.error || 'REGISTER_FAILED';
+        setMsg(toUserMessage(err));
+        return;
+      }
+
+      saveEntryId(d.id);
+      setMsg('Inscription au tirage enregistrée ✅');
+    } catch (e) {
+      setMsg(toUserMessage(e));
+    } finally {
+      setLotteryLoading(false);
+    }
+  }}
+  className={isLantignie ? 'neonButton' : undefined}
+  style={!isLantignie ? { padding: '8px 14px', cursor: lotteryLoading ? 'wait' : 'pointer', opacity: lotteryLoading ? .7 : 1 } : undefined}
+  disabled={lotteryLoading}
+>
+  {lotteryLoading ? '...' : 'M’inscrire au tirage'}
+</button>
 
       {!soundReady && (
         <p style={{ marginTop: 8 }}>

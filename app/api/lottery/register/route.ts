@@ -43,13 +43,16 @@ export async function POST(req: NextRequest) {
     }
 
     // Upsert chanteur (unicité (room_id, lower(trim(display_name))) assurée par l’index SQL)
-    // On tente un select d’abord pour récupérer l'id
-    const { data: existingSinger } = await db
+    const { data: existingSinger, error: eSelSinger } = await db
       .from("singers")
       .select("id")
       .eq("room_id", room_id)
-      .ilike("display_name", display_name) // tolérant à la casse
+      .ilike("display_name", display_name)
       .maybeSingle();
+
+    if (eSelSinger) {
+      return NextResponse.json({ ok: false, error: eSelSinger.message }, { status: 500, headers: noStore });
+    }
 
     let singer_id = existingSinger?.id as string | undefined;
 
@@ -58,9 +61,11 @@ export async function POST(req: NextRequest) {
         .from("singers")
         .insert({ room_id, display_name })
         .select("id")
-        .maybeSingle();
-      if (eIns) return NextResponse.json({ ok: false, error: eIns.message }, { status: 500, headers: noStore });
-      singer_id = created?.id as string;
+        .single(); // <— EXIGER une ligne
+      if (eIns || !created?.id) {
+        return NextResponse.json({ ok: false, error: eIns?.message || "DB_INSERT_SINGER_FAILED" }, { status: 500, headers: noStore });
+      }
+      singer_id = created.id as string;
     }
 
     // Inscription lottery (unique par (room_id, singer_id))
@@ -68,24 +73,31 @@ export async function POST(req: NextRequest) {
       .from("lottery_entries")
       .insert({ room_id, singer_id })
       .select("id")
-      .maybeSingle();
+      .single(); // <— EXIGER une ligne
 
     if (eEntry) {
       // Conflit d’unicité = déjà inscrit → on retourne OK + l’entry existante (on la cherche)
-      if (eEntry.code === "23505") {
-        const { data: existing } = await db
+      if ((eEntry as any).code === "23505") {
+        const { data: existing, error: eFind } = await db
           .from("lottery_entries")
           .select("id")
           .eq("room_id", room_id)
           .eq("singer_id", singer_id!)
-          .maybeSingle();
-        if (existing) return NextResponse.json({ ok: true, id: existing.id, note: "déjà inscrit" }, { headers: noStore });
+          .single(); // <— on exige ici aussi (sinon pas d’ID fiable)
+        if (eFind) {
+          return NextResponse.json({ ok: false, error: eFind.message }, { status: 500, headers: noStore });
+        }
+        return NextResponse.json({ ok: true, id: existing.id, note: "déjà inscrit" }, { headers: noStore });
       }
       return NextResponse.json({ ok: false, error: eEntry.message }, { status: 500, headers: noStore });
     }
 
-    // OK → renvoie l'id (pour l'abonnement Realtime)
-    return NextResponse.json({ ok: true, id: entry?.id }, { headers: noStore });
+    // Sécurité : ne jamais renvoyer OK sans id
+    if (!entry?.id) {
+      return NextResponse.json({ ok: false, error: "DB_INSERT_ENTRY_NO_ID" }, { status: 500, headers: noStore });
+    }
+
+    return NextResponse.json({ ok: true, id: entry.id }, { headers: noStore });
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e);
     return NextResponse.json({ ok: false, error: msg }, { status: 500, headers: noStore });

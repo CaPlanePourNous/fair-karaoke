@@ -8,7 +8,7 @@ type QItem = {
   artist: string | null;
   display_name: string | null;
   is_playing: boolean;
-  created_at: string;
+  created_at: string; // on ne l'affiche plus
 };
 
 const supabase = createClient(
@@ -40,7 +40,7 @@ export function RoomQueueModal({
         throw new Error(j?.error || 'LOAD_QUEUE_FAILED');
       }
       setItems(j.items as QItem[]);
-    } catch (e: any) {
+    } catch (e:any) {
       setErr(e.message || 'Erreur de chargement');
     } finally {
       setLoading(false);
@@ -51,7 +51,6 @@ export function RoomQueueModal({
     if (!open) return;
     load();
 
-    // Realtime: si une requête change, on recharge (simple & robuste)
     const ch = supabase
       .channel(`rq_${slug}`)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'requests' }, () => {
@@ -59,7 +58,10 @@ export function RoomQueueModal({
       })
       .subscribe();
 
-    return () => { supabase.removeChannel(ch); };
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setOpen(false); };
+    window.addEventListener('keydown', onKey);
+
+    return () => { supabase.removeChannel(ch); window.removeEventListener('keydown', onKey); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, slug]);
 
@@ -74,10 +76,12 @@ export function RoomQueueModal({
 
   return (
     <>
+      {/* TOGGLE: ouvre ET ferme */}
       <button
         className={triggerClassName}
-        onClick={() => setOpen(true)}
+        onClick={() => setOpen((v) => !v)}
         aria-haspopup="dialog"
+        aria-expanded={open}
       >
         {label}
       </button>
@@ -88,16 +92,15 @@ export function RoomQueueModal({
           aria-modal="true"
           className="fixed inset-0 z-50 flex items-center justify-center"
         >
+          {/* Fond semi-transparent, clic ferme */}
           <div className="absolute inset-0 bg-black/50" onClick={() => setOpen(false)} />
-          <div className="relative w-[min(700px,92vw)] max-h-[80vh] overflow-hidden rounded-xl bg-white shadow-xl">
-            <div className="flex items-center justify-between px-4 py-3 border-b">
-              <h2 className="font-semibold text-lg">File d’attente</h2>
-              <button onClick={() => setOpen(false)} aria-label="Fermer">✕</button>
-            </div>
 
+          {/* Contenu : plus d’en-tête, juste la liste + bouton Fermer */}
+          <div className="relative w-[min(700px,92vw)] max-h-[80vh] overflow-hidden rounded-xl bg-white shadow-xl">
             <div className="p-4 overflow-auto" style={{ maxHeight: '60vh' }}>
               {loading && <div>Chargement…</div>}
               {err && <div className="text-red-600 text-sm">{err}</div>}
+
               {!loading && !err && queue.length === 0 && (
                 <div className="text-sm text-gray-600">Aucune demande en attente.</div>
               )}
@@ -113,16 +116,24 @@ export function RoomQueueModal({
                       {q.artist ? <span className="text-gray-600"> — {q.artist}</span> : null}
                     </div>
                     <div className="text-xs text-gray-600">
-                      {q.display_name ?? 'Anonyme'} · {new Date(q.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                      {q.is_playing ? <span className="ml-2 px-1.5 py-0.5 text-xs rounded bg-green-600 text-white">En cours</span> : null}
+                      {q.display_name ?? 'Anonyme'}
+                      {q.is_playing ? (
+                        <span className="ml-2 px-1.5 py-0.5 text-xs rounded bg-green-600 text-white">
+                          En cours
+                        </span>
+                      ) : null}
                     </div>
+                    {/* 👉 On n’affiche plus l’heure d’inscription */}
                   </li>
                 ))}
               </ul>
             </div>
 
             <div className="px-4 py-3 border-t text-right">
-              <button className="px-3 py-1.5 rounded bg-gray-800 text-white" onClick={() => setOpen(false)}>
+              <button
+                className="px-3 py-1.5 rounded bg-gray-800 text-white"
+                onClick={() => setOpen(false)}
+              >
                 Fermer
               </button>
             </div>

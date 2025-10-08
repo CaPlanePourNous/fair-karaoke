@@ -270,7 +270,7 @@ export default function RoomClient({ slug }: { slug: string }) {
         <p style={{ margin: '6px 0 10px', fontSize: 14, opacity: .85 }}>
           🔎 Pas trouvé ?{' '}
           <a
-            href={`https://www.karafun.fr/karaoke/search/?q=${encodeURIComponent(q.trim())}`}
+            href={`https://www.karafun.fr/search/?q=${encodeURIComponent(q.trim())}`}
             target="_blank"
             rel="noopener noreferrer"
           >

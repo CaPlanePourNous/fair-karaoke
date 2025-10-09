@@ -54,9 +54,6 @@ export default function RoomClient({ slug }: { slug: string }) {
 
   const [lotteryLoading, setLotteryLoading] = useState(false);
 
-  // (optionnel) singer id si tu l’utilises ailleurs; pas requis pour /api/requests
-  const singerIdRef = useRef<string | null>(null);
-
   // Stats d’attente
   const [stats, setStats] = useState<{ total_waiting: number; est_minutes: number } | null>(null);
   useEffect(() => {
@@ -101,7 +98,7 @@ export default function RoomClient({ slug }: { slug: string }) {
     return () => clearTimeout(t);
   }, [q]);
 
-  // ✅ Demander via le même chemin que l’ancien bouton: POST /api/requests
+  // ✅ Demander via /api/requests (flux “texte libre” historique)
   async function pickFromCatalog(item: { id: string|number; title: string; artist?: string|null }) {
     const name = displayName.trim();
     if (!name) {
@@ -117,12 +114,12 @@ export default function RoomClient({ slug }: { slug: string }) {
       const r = await fetch('/api/requests', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        // Même payload que l’ancien bouton: display_name + karafun_id
+        // Payload attendu par l’ancien backend
         body: JSON.stringify({
           room_slug: slug,
           display_name: name,
           title: item.title,
-          artist: item.artist || '',
+          artist: item.artist || 'Inconnu', // <- évite "" si le serveur refuse vide
           karafun_id: String(item.id),
         }),
       });
@@ -219,6 +216,7 @@ export default function RoomClient({ slug }: { slug: string }) {
       </div>
 
       {/* En attente + bouton Voir la file */}
+      {/* (si tu as déjà ces stats côté API) */}
       {stats && (
         <div
           className="flex items-center justify-between gap-2 px-3 py-2 bg-gray-100 rounded-md border text-sm shadow-sm"
@@ -353,7 +351,6 @@ export default function RoomClient({ slug }: { slug: string }) {
             }
             saveEntryId(d.id);
             setMsg('Inscription au tirage enregistrée ✅');
-            // singerIdRef.current = d.singer_id ?? singerIdRef.current; // si dispo côté API
           } catch (e) {
             setMsg(toUserMessage(e));
           } finally {

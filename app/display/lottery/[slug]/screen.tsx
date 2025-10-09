@@ -20,6 +20,10 @@ export default function LotteryDisplay({ slug }: { slug: string }) {
   const [rolling, setRolling] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // garde-fous pour éviter anims multiples
+  const lastWinnerAtRef = useRef<number>(0);
+  const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
   // Charger room_id + dernier gagnant (si la page arrive après un tirage)
   useEffect(() => {
     let alive = true;
@@ -44,9 +48,14 @@ export default function LotteryDisplay({ slug }: { slug: string }) {
         );
         let st: LotteryState = { ok: false };
         try { st = await r.json(); } catch {}
-        if (st.ok && st.lastWinner?.singer_id) {
-          const name = st.lastWinner.display_name || null;
-          if (name && alive) setWinnerName(name); // pas d’anim rétroactive
+        if (st.ok && st.lastWinner?.created_at) {
+          const ts = Date.parse(st.lastWinner.created_at);
+          if (Number.isFinite(ts)) lastWinnerAtRef.current = ts;
+          const name = (st.lastWinner.display_name || "").trim();
+          if (name && alive) {
+            // on affiche le dernier gagnant (sans relancer d’anim rétroactive)
+            setWinnerName(name);
+          }
         }
       } catch (e: any) {
         if (alive) setError(e?.message || String(e));
@@ -65,6 +74,12 @@ export default function LotteryDisplay({ slug }: { slug: string }) {
         { event: "INSERT", schema: "public", table: "lottery_winners", filter: `room_id=eq.${roomId}` },
         async (payload) => {
           try {
+            const createdAt = (payload?.new as any)?.created_at as string | undefined;
+            if (createdAt) {
+              const t = Date.parse(createdAt);
+              if (Number.isFinite(t)) lastWinnerAtRef.current = t;
+            }
+
             const singerId = (payload?.new as any)?.singer_id as string | undefined;
             let name: string | null = null;
             if (singerId) {
@@ -80,9 +95,13 @@ export default function LotteryDisplay({ slug }: { slug: string }) {
               let st: LotteryState = { ok: false };
               try { st = await r.json(); } catch {}
               name = st?.lastWinner?.display_name || null;
+              if (st?.lastWinner?.created_at) {
+                const t = Date.parse(st.lastWinner.created_at);
+                if (Number.isFinite(t)) lastWinnerAtRef.current = t;
+              }
             }
             if (!name) name = "🎉 Gagnant";
-            runSlotAnimation(name);
+            if (!rolling) runSlotAnimation(name);
           } catch {
             setWinnerName("🎉 Gagnant"); // fallback sans anim
           }
@@ -91,7 +110,36 @@ export default function LotteryDisplay({ slug }: { slug: string }) {
       .subscribe();
 
     return () => { supa.removeChannel(ch); };
-  }, [roomId, slug]);
+  }, [roomId, slug, rolling]);
+
+  // Fallback: Poll l’état toutes les 2s, lance l’anim si un nouveau gagnant apparaît
+  useEffect(() => {
+    if (!roomId) return;
+    if (pollingRef.current) clearInterval(pollingRef.current);
+    pollingRef.current = setInterval(async () => {
+      try {
+        if (rolling) return; // ne poll pas pendant l'anim
+        const r = await fetch(`/api/lottery/state?room_slug=${encodeURIComponent(slug)}`, { cache: "no-store" });
+        let st: LotteryState = { ok: false };
+        try { st = await r.json(); } catch {}
+        const created = st?.lastWinner?.created_at;
+        const name = (st?.lastWinner?.display_name || "").trim();
+        if (!created || !name) return;
+        const ts = Date.parse(created);
+        if (!Number.isFinite(ts)) return;
+        if (ts > lastWinnerAtRef.current) {
+          lastWinnerAtRef.current = ts;
+          runSlotAnimation(name);
+        }
+      } catch {
+        // ignore
+      }
+    }, 2000);
+    return () => {
+      if (pollingRef.current) clearInterval(pollingRef.current);
+      pollingRef.current = null;
+    };
+  }, [roomId, slug, rolling]);
 
   // Confettis
   function fireConfetti(durationMs = 1800) {
@@ -135,47 +183,61 @@ export default function LotteryDisplay({ slug }: { slug: string }) {
     setTimeout(() => { container.remove(); }, durationMs);
   }
 
-  // Animation slot (~6.3s : 2.5s rapide + ~3.8s ralentissement)
+  // Animation slot : ~6.5 s (3 s rapide + ~3.5 s slowdown progressif)
   function runSlotAnimation(finalName: string) {
+    if (rolling) return;
     setRolling(true);
     setWinnerName(null);
 
     const pool = ["🎤", "🍻", "…", "???"];
-    const displayEl = document.getElementById("slot-display")!;
+    const displayEl = document.getElementById("slot-display");
+    if (!displayEl) {
+      // si pour une raison quelconque l’élément n’est pas prêt, on affiche direct
+      setRolling(false);
+      setWinnerName(finalName || "🎉");
+      return;
+    }
+
     let idx = 0;
-    const interval = 50;
+    const fastInterval = 50;
 
-    // Phase 1: 2.5s à vitesse constante
+    // Phase 1 : 3s à vitesse constante
     const t0 = Date.now();
-    const phase1 = setInterval(() => {
-      displayEl.textContent = pool[idx % pool.length];
+    const fastTimer = setInterval(() => {
+      (displayEl as HTMLElement).textContent = pool[idx % pool.length];
       idx++;
-      if (Date.now() - t0 > 2500) {
-        clearInterval(phase1);
-        phase2();
+      if (Date.now() - t0 >= 3000) {
+        clearInterval(fastTimer);
+        slowDown();
       }
-    }, interval);
+    }, fastInterval);
 
-    // Phase 2: ralentissement (~3.8s) puis stop sur le gagnant
-    function phase2() {
-      const steps = 20;          // nombre d'updates pendant le slowdown
-      const incMs = 15;          // on allonge de 15 ms à chaque tick
-      let current = 0;
-      const slow = setInterval(() => {
-        if (current < steps - 1) {
-          displayEl.textContent = pool[idx % pool.length];
+    // Phase 2 : ralentissement progressif par setTimeout chaînés
+    function slowDown() {
+      // 18 pas, délai qui s’allonge à chaque tick (≈ 3.5 s au total)
+      const steps = 18;
+      const base = 80;     // ms de départ
+      const grow = 60;     // on ajoute ~60 ms par pas
+      let step = 0;
+
+      const tick = () => {
+        if (step < steps - 1) {
+          (displayEl as HTMLElement).textContent = pool[idx % pool.length];
           idx++;
-          current++;
+          step++;
+          const nextDelay = base + step * grow;
+          setTimeout(tick, nextDelay);
         } else {
-          clearInterval(slow);
-          displayEl.textContent = finalName || "🎉";
+          // arrêt final sur le gagnant
+          (displayEl as HTMLElement).textContent = finalName || "🎉";
           setRolling(false);
           setWinnerName(finalName || "🎉");
-          // ding (si bloqué par le navigateur, on ignore l’erreur)
           try { new Audio("/ding.mp3").play().catch(() => {}); } catch {}
           fireConfetti();
         }
-      }, interval + current * incMs);
+      };
+
+      setTimeout(tick, base);
     }
   }
 
@@ -232,10 +294,9 @@ export default function LotteryDisplay({ slug }: { slug: string }) {
             ? "Tirage en cours…"
             : winnerName
             ? "🎉 Bravo au gagnant !"
-            : "Êtes-vous prêt ?"}
+            : ""}
         </div>
 
-        {/* erreurs éventuelles */}
         {error && (
           <div
             style={{

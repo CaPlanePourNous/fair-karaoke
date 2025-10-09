@@ -7,8 +7,8 @@ import { RoomQueueModal } from '@/components/RoomQueueModal';
 type Suggestion = {
   title: string;
   artist: string | null;
-  karafun_id?: string;
-  id?: string | number;
+  karafun_id?: string;           // id renvoyé par /api/search
+  id?: string | number;          // fallback éventuel
   url?: string;
 };
 
@@ -17,6 +17,7 @@ const supa = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
 );
 
+// Storage entry_id pour la loterie
 function saveEntryId(id: string) {
   try { localStorage.setItem('lottery_entry_id', id); } catch {}
 }
@@ -24,12 +25,17 @@ function loadEntryId() {
   try { return localStorage.getItem('lottery_entry_id'); } catch { return null; }
 }
 
+// Mapping d’erreurs techniques → messages clairs
 function toUserMessage(raw: unknown): string {
   const s = String(raw || '').toLowerCase();
   if (s.includes('singers_room_name_unique')) return "Ce nom est déjà utilisé ici. Ajoute une initiale ou choisis un autre nom.";
   if (s.includes('lottery_entries') && s.includes('duplicate')) return "Tu es déjà inscrit au tirage 😉";
-  if (s.includes('duplicate key value') || s.includes('unique constraint') || s.includes('titre déjà présent') || (s.includes('requests') && s.includes('duplicate')))
-    return "Ce titre est déjà dans la liste ou a déjà été chanté ce soir. Choisis-en un autre.";
+  if (
+    s.includes('duplicate key value') ||
+    s.includes('unique constraint') ||
+    s.includes('titre déjà présent') ||
+    (s.includes('requests') && s.includes('duplicate'))
+  ) return "Ce titre est déjà dans la liste ou a déjà été chanté ce soir. Choisis-en un autre.";
   if (s.includes('file pleine') || s.includes('max 15')) return "La file est pleine (≈15 titres / ~45 min). Réessaie un peu plus tard.";
   if (s.includes('2 chansons max')) return "Tu as déjà 2 chansons en file. Attends qu’une passe avant d’en proposer une autre.";
   if (s.includes('30s') || s.includes('rate limit')) return "Doucement 🙂 Attends 30 secondes avant d’envoyer une nouvelle demande.";
@@ -43,14 +49,15 @@ export default function RoomClient({ slug }: { slug: string }) {
 
   const [displayName, setDisplayName] = useState('');
   const [msg, setMsg] = useState<string | null>(null);
+  const msgRef = useRef<HTMLDivElement | null>(null);
   const [won, setWon] = useState(false);
 
-  const [title, setTitle] = useState('');     // affichage en lecture seule
-  const [artist, setArtist] = useState('');   // affichage en lecture seule
-
   const [lotteryLoading, setLotteryLoading] = useState(false);
+
+  // (optionnel) singer id si tu l’utilises ailleurs, pas requis pour /api/requests
   const singerIdRef = useRef<string | null>(null);
 
+  // Stats d’attente
   const [stats, setStats] = useState<{ total_waiting: number; est_minutes: number } | null>(null);
   useEffect(() => {
     async function load() {
@@ -66,6 +73,16 @@ export default function RoomClient({ slug }: { slug: string }) {
   }, []);
   const limitReached =
     (stats?.total_waiting ?? 0) >= 15 || (stats?.est_minutes ?? 0) > 45;
+
+  // Scroll le message dans la vue dès qu’on en a un
+  useEffect(() => {
+    if (msg && msgRef.current) {
+      // le timeout laisse le DOM peindre le message avant de scroller
+      setTimeout(() => {
+        msgRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }, 0);
+    }
+  }, [msg]);
 
   // Recherche KaraFun
   const [q, setQ] = useState('');
@@ -85,10 +102,11 @@ export default function RoomClient({ slug }: { slug: string }) {
     return () => clearTimeout(t);
   }, [q]);
 
-  // Demande via catalogue
+  // ✅ Demander via le même chemin que l’ancien bouton: POST /api/requests
   async function pickFromCatalog(item: { id: string|number; title: string; artist?: string|null }) {
-    if (!singerIdRef.current) {
-      setMsg("Choisis/valide d’abord ton nom.");
+    const name = displayName.trim();
+    if (!name) {
+      setMsg("Renseigne ton nom avant de demander un titre.");
       return;
     }
     if (limitReached) {
@@ -97,31 +115,28 @@ export default function RoomClient({ slug }: { slug: string }) {
     }
     setMsg(null);
     try {
-      const r = await fetch('/api/requests/add', {
+      const r = await fetch('/api/requests', {
         method: 'POST',
-        headers: { 'content-type': 'application/json' },
+        headers: { 'Content-Type': 'application/json' },
+        // Même payload que l’ancien bouton: display_name + karafun_id
         body: JSON.stringify({
           room_slug: slug,
-          singer_id: singerIdRef.current,
-          provider: 'karafun',
-          track_id: String(item.id),
+          display_name: name,
           title: item.title,
-          artist: item.artist || null,
+          artist: item.artist || '',
+          karafun_id: String(item.id),
         }),
       });
       const j = await r.json().catch(() => ({}));
-      if (!r.ok || j?.ok !== true) {
-        setMsg(`Demande refusée: ${toUserMessage(j?.error || 'UNKNOWN')}`);
+      if (!r.ok || j?.ok === false) {
+        setMsg(toUserMessage(j?.error || 'UNKNOWN'));
         return;
       }
-      // Affiche ce qui a été demandé, mais champs restent désactivés
-      setTitle(item.title);
-      setArtist(item.artist || '');
       setMsg('🎶 Demande enregistrée !');
       setQ('');
       setList([]);
-    } catch {
-      setMsg('Réseau indisponible.');
+    } catch (e) {
+      setMsg(toUserMessage(e));
     }
   }
 
@@ -234,9 +249,13 @@ export default function RoomClient({ slug }: { slug: string }) {
         onChange={e => setDisplayName(e.target.value)}
         placeholder="Nom ou Surnom"
         autoFocus
-        style={{ width: '100%', padding: 8, margin: '6px 0 14px' }}
+        style={{ width: '100%', padding: 8, margin: '6px 0 8px' }}
       />
-      {/* ⚠️ Assigne singerIdRef.current quand ton backend renvoie le singer_id */}
+
+      {/* Message placé AVANT le bloc de recherche */}
+      <div ref={msgRef} aria-live="polite" style={{ minHeight: msg ? 24 : 0, margin: msg ? '6px 0 10px' : '0' }}>
+        {msg && <p style={{ margin: 0 }}>{msg}</p>}
+      </div>
 
       {/* Recherche KaraFun */}
       <label>Recherche dans le catalogue KaraFun</label>
@@ -299,31 +318,6 @@ export default function RoomClient({ slug }: { slug: string }) {
         </ul>
       )}
 
-      {/* Champs libres : affichés mais désactivés */}
-      <label>Titre (saisie libre désactivée)</label>
-      <input
-        value={title}
-        disabled
-        readOnly
-        title="Sélectionne une chanson depuis le catalogue"
-        placeholder="Sélectionne une chanson depuis le catalogue"
-        style={{ width: '100%', padding: 8, margin: '6px 0 14px', opacity: .6, cursor: 'not-allowed' }}
-        aria-disabled="true"
-      />
-
-      <label>Artiste (saisie libre désactivée)</label>
-      <input
-        value={artist}
-        disabled
-        readOnly
-        title="Sélectionne une chanson depuis le catalogue"
-        placeholder="Sélectionne une chanson depuis le catalogue"
-        style={{ width: '100%', padding: 8, margin: '6px 0 14px', opacity: .6, cursor: 'not-allowed' }}
-        aria-disabled="true"
-      />
-
-      {msg && <p style={{ marginTop: 12 }} aria-live="polite">{msg}</p>}
-
       <hr style={{ margin: '24px 0' }} />
       <h2>🎁 Tirage au sort</h2>
       <p>Inscris ton nom pour participer (une inscription par personne).</p>
@@ -361,8 +355,8 @@ export default function RoomClient({ slug }: { slug: string }) {
             saveEntryId(d.id);
             setMsg('Inscription au tirage enregistrée ✅');
             // singerIdRef.current = d.singer_id ?? singerIdRef.current; // si dispo côté API
-          } catch {
-            setMsg('Réseau indisponible. Réessaie.');
+          } catch (e) {
+            setMsg(toUserMessage(e));
           } finally {
             setLotteryLoading(false);
           }

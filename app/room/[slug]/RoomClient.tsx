@@ -53,7 +53,7 @@ export default function RoomClient({ slug }: { slug: string }) {
   const [won, setWon] = useState(false);
 
   const [lotteryLoading, setLotteryLoading] = useState(false);
-  const LOTTERY_ANIMATION_DELAY_MS = 5600; // ~5.5 s pour laisser l’écran public finir l’anim
+  const LOTTERY_ANIMATION_DELAY_MS = 6600; // ~6.5 s pour laisser l’écran public finir l’anim
 
 
   // (optionnel) singer id si tu l’utilises ailleurs, pas requis pour /api/requests

@@ -21,15 +21,16 @@ export default function LotteryDisplay({ slug }: { slug: string }) {
   const [rolling, setRolling] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // anti-doublon: mémorise le dernier tirage (timestamp) déjà traité
   const lastWinnerAtRef = useRef<number>(0);
-  const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const namesRef = useRef<string[]>([]); // noms des inscrits (lottery_entries)
 
-  // util: construit un pool mélangeant symboles et noms
+  // noms des inscrits pour enrichir le pool d’animation
+  const namesRef = useRef<string[]>([]);
+
+  // construit un pool (symboles + noms) pour l’animation
   function buildPool() {
     const symbols = ["🎤", "🍻", "…", "???", "🎶", "⭐"];
     const names = namesRef.current.length ? namesRef.current.slice() : [];
-    // interleave: on insère 1 nom tous les 2 symboles environ
     const out: string[] = [];
     let i = 0, j = 0;
     while (out.length < 120) {
@@ -43,13 +44,12 @@ export default function LotteryDisplay({ slug }: { slug: string }) {
     return out;
   }
 
-  // Charger room_id + NE PAS imposer le dernier gagnant (écran neutre au départ)
+  // Charger room_id, initialiser le marqueur "dernier gagnant" (sans l’afficher)
   useEffect(() => {
     let alive = true;
     (async () => {
       try {
         setError(null);
-        // 1) room_id
         const { data: room, error: eRoom } = await supa
           .from("rooms")
           .select("id")
@@ -60,11 +60,8 @@ export default function LotteryDisplay({ slug }: { slug: string }) {
         if (!alive) return;
         setRoomId(room.id as string);
 
-        // 2) Préparer timestamp dernier gagnant (sans l’afficher)
-        const r = await fetch(
-          `/api/lottery/state?room_slug=${encodeURIComponent(slug)}`,
-          { cache: "no-store" }
-        );
+        // initialise le point de référence pour éviter d’animer sur un vieux tirage
+        const r = await fetch(`/api/lottery/state?room_slug=${encodeURIComponent(slug)}`, { cache: "no-store" });
         let st: LotteryState = { ok: false };
         try { st = await r.json(); } catch {}
         if (st.ok && st.lastWinner?.created_at) {
@@ -72,7 +69,7 @@ export default function LotteryDisplay({ slug }: { slug: string }) {
           if (Number.isFinite(ts)) lastWinnerAtRef.current = ts;
         }
 
-        // 3) Charger les noms d’inscrits (lottery_entries) et rafraîchir toutes les 30s
+        // charger les noms des inscrits (affichage bandeau)
         const loadEntries = async () => {
           try {
             const { data, error: eList } = await supa
@@ -80,14 +77,11 @@ export default function LotteryDisplay({ slug }: { slug: string }) {
               .select("display_name")
               .eq("room_id", room.id);
             if (!eList && Array.isArray(data)) {
-              const arr = data
+              namesRef.current = data
                 .map((e: any) => String(e?.display_name || "").trim())
                 .filter(Boolean);
-              namesRef.current = arr;
             }
-          } catch {
-            /* ignore */
-          }
+          } catch {/* ignore */}
         };
         await loadEntries();
         const it = setInterval(loadEntries, 30000);
@@ -99,7 +93,7 @@ export default function LotteryDisplay({ slug }: { slug: string }) {
     return () => { alive = false; };
   }, [slug]);
 
-  // Realtime: INSERT sur lottery_winners → anime + affiche
+  // Realtime: un seul déclencheur (INSERT sur lottery_winners pour la room)
   useEffect(() => {
     if (!roomId) return;
     const ch = supa
@@ -109,14 +103,19 @@ export default function LotteryDisplay({ slug }: { slug: string }) {
         { event: "INSERT", schema: "public", table: "lottery_winners", filter: `room_id=eq.${roomId}` },
         async (payload) => {
           try {
-            const createdAt = (payload?.new as any)?.created_at as string | undefined;
-            if (createdAt) {
-              const t = Date.parse(createdAt);
-              if (Number.isFinite(t)) lastWinnerAtRef.current = t;
+            // timestamp de l’INSERT (drawn_at prioritaire, fallback created_at)
+            const p = (payload?.new as any) || {};
+            const tsStr: string | undefined = p.drawn_at || p.created_at;
+            if (tsStr) {
+              const ts = Date.parse(tsStr);
+              // garde anti-doublon: on ignore si on a déjà traité ce tirage
+              if (Number.isFinite(ts) && ts <= lastWinnerAtRef.current) return;
+              if (Number.isFinite(ts)) lastWinnerAtRef.current = ts;
             }
 
-            const singerId = (payload?.new as any)?.singer_id as string | undefined;
+            // récupérer le nom
             let name: string | null = null;
+            const singerId = p.singer_id as string | undefined;
             if (singerId) {
               const { data: s } = await supa
                 .from("singers")
@@ -130,15 +129,14 @@ export default function LotteryDisplay({ slug }: { slug: string }) {
               let st: LotteryState = { ok: false };
               try { st = await r.json(); } catch {}
               name = st?.lastWinner?.display_name || null;
-              if (st?.lastWinner?.created_at) {
-                const t = Date.parse(st.lastWinner.created_at);
-                if (Number.isFinite(t)) lastWinnerAtRef.current = t;
-              }
+              const t2 = st?.lastWinner?.created_at ? Date.parse(st.lastWinner.created_at) : NaN;
+              if (Number.isFinite(t2)) lastWinnerAtRef.current = t2;
             }
             if (!name) name = "🎉 Gagnant";
+
             if (!rolling) runSlotAnimation(name);
           } catch {
-            setWinnerName("🎉 Gagnant");
+            setWinnerName("🎉 Gagnant"); // fallback sans anim
           }
         }
       )
@@ -147,34 +145,7 @@ export default function LotteryDisplay({ slug }: { slug: string }) {
     return () => { supa.removeChannel(ch); };
   }, [roomId, slug, rolling]);
 
-  // Fallback polling: toutes les 2s, déclenche si un nouveau gagnant apparaît
-  useEffect(() => {
-    if (!roomId) return;
-    if (pollingRef.current) clearInterval(pollingRef.current);
-    pollingRef.current = setInterval(async () => {
-      try {
-        if (rolling) return;
-        const r = await fetch(`/api/lottery/state?room_slug=${encodeURIComponent(slug)}`, { cache: "no-store" });
-        let st: LotteryState = { ok: false };
-        try { st = await r.json(); } catch {}
-        const created = st?.lastWinner?.created_at;
-        const name = (st?.lastWinner?.display_name || "").trim();
-        if (!created || !name) return;
-        const ts = Date.parse(created);
-        if (!Number.isFinite(ts)) return;
-        if (ts > lastWinnerAtRef.current) {
-          lastWinnerAtRef.current = ts;
-          runSlotAnimation(name);
-        }
-      } catch { /* ignore */ }
-    }, 2000);
-    return () => {
-      if (pollingRef.current) clearInterval(pollingRef.current);
-      pollingRef.current = null;
-    };
-  }, [roomId, slug, rolling]);
-
-  // Confettis : plus nombreux et un peu plus longs
+  // Confettis plus nombreux/longs
   function fireConfetti(durationMs = 2800) {
     const container = document.createElement("div");
     container.style.position = "fixed";
@@ -185,7 +156,7 @@ export default function LotteryDisplay({ slug }: { slug: string }) {
     document.body.appendChild(container);
 
     const colors = ["#ff4747", "#ffd166", "#06d6a0", "#118ab2", "#8338ec"];
-    const N = 240; // ++
+    const N = 240;
 
     for (let i = 0; i < N; i++) {
       const d = document.createElement("div");
@@ -216,7 +187,7 @@ export default function LotteryDisplay({ slug }: { slug: string }) {
     setTimeout(() => { container.remove(); }, durationMs);
   }
 
-  // Animation slot : ≈ 5.5 s (3.0 s rapide + ~2.5 s slowdown)
+  // Animation (~5.5 s : 3.0s rapide + ~2.5s slowdown)
   function runSlotAnimation(finalName: string) {
     if (rolling) return;
     setRolling(true);
@@ -246,9 +217,9 @@ export default function LotteryDisplay({ slug }: { slug: string }) {
 
     // Phase 2 : ralentissement progressif ≈ 2.5 s
     function slowDown() {
-      const steps = 16; // un peu moins de pas
-      const base = 60;  // départ plus court
-      const grow = 40;  // croissance plus contenue
+      const steps = 16;
+      const base = 60;
+      const grow = 40;
       let step = 0;
 
       const tick = () => {
@@ -259,7 +230,6 @@ export default function LotteryDisplay({ slug }: { slug: string }) {
           const nextDelay = base + step * grow;
           setTimeout(tick, nextDelay);
         } else {
-          // stop final
           (displayEl as HTMLElement).textContent = finalName || "🎉";
           setRolling(false);
           setWinnerName(finalName || "🎉");
@@ -272,19 +242,17 @@ export default function LotteryDisplay({ slug }: { slug: string }) {
     }
   }
 
-  // Réinitialiser l’écran (avant tirage)
+  // Reset manuel (neutre “Prêt pour le tirage…”)
   function resetScreen() {
     if (rolling) return;
     setWinnerName(null);
     setError(null);
   }
 
-  // Raccourci clavier R pour reset
+  // R = reset
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key.toLowerCase() === "r" && !rolling) {
-        resetScreen();
-      }
+      if (e.key.toLowerCase() === "r" && !rolling) resetScreen();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
@@ -302,7 +270,6 @@ export default function LotteryDisplay({ slug }: { slug: string }) {
         color: "#fff",
       }}
     >
-      {/* bouton reset discret (visible hors tirage) */}
       {!rolling && (
         <button
           onClick={resetScreen}
@@ -324,14 +291,7 @@ export default function LotteryDisplay({ slug }: { slug: string }) {
         </button>
       )}
 
-      <div
-        style={{
-          width: "min(1100px, 92vw)",
-          textAlign: "center",
-          userSelect: "none",
-        }}
-      >
-        {/* Bandeau roulette */}
+      <div style={{ width: "min(1100px, 92vw)", textAlign: "center", userSelect: "none" }}>
         <div
           style={{
             margin: "0 auto",
@@ -359,7 +319,6 @@ export default function LotteryDisplay({ slug }: { slug: string }) {
           </div>
         </div>
 
-        {/* sous-texte (plus grand quand gagnant) */}
         <div
           style={{
             marginTop: 16,
@@ -368,11 +327,7 @@ export default function LotteryDisplay({ slug }: { slug: string }) {
             fontWeight: winnerName ? 800 : 500,
           }}
         >
-          {rolling
-            ? "Tirage en cours…"
-            : winnerName
-            ? "🎉 Bravo au gagnant !"
-            : ""}
+          {rolling ? "Tirage en cours…" : winnerName ? "🎉 Bravo au gagnant !" : ""}
         </div>
 
         {error && (

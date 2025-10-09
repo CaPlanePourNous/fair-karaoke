@@ -1,6 +1,9 @@
 // app/api/requests/route.ts
 import { NextRequest, NextResponse } from 'next/server';
 import { createAdminSupabaseClient } from '@/lib/supabaseServer';
+import { containsInsult } from '@/lib/profanity';
+import { detectProfanity } from '@/lib/profanity';
+
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -66,10 +69,16 @@ export async function POST(req: NextRequest) {
     // 2) Trouver/créer le chanteur si singer_id non fourni
     let singerId = (body.singer_id || '').trim();
     const displayName = (body.display_name || '').trim();
-    if (!singerId) {
-      if (!displayName) {
-        return NextResponse.json({ ok: false, error: 'display_name ou singer_id requis' }, { status: 400 });
-      }
+if (displayName) {
+  const insult = containsInsult(displayName);
+  if (insult) {
+    return NextResponse.json(
+      { ok: false, error: `Nom refusé : langage inapproprié (${insult}).` },
+      { status: 400 }
+    );
+  }
+}
+
       const { data: existing } = await db
         .from('singers')
         .select('id')

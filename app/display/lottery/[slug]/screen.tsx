@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { createClient } from "@supabase/supabase-js";
 
 type LotteryState = {
@@ -19,11 +19,8 @@ export default function LotteryDisplay({ slug }: { slug: string }) {
   const [winnerName, setWinnerName] = useState<string | null>(null);
   const [rolling, setRolling] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [names, setNames] = useState<string[]>([]);
-  const audioRef = useRef<HTMLAudioElement | null>(null);
-  const [soundReady, setSoundReady] = useState(false);
 
-  // Charger room_id + noms + dernier gagnant
+  // Charger room_id + dernier gagnant (si la page arrive après un tirage)
   useEffect(() => {
     let alive = true;
     (async () => {
@@ -40,20 +37,7 @@ export default function LotteryDisplay({ slug }: { slug: string }) {
         if (!alive) return;
         setRoomId(room.id as string);
 
-        // 2) charger quelques noms (facultatif pour le bandeau)
-        const { data: list, error: eNames } = await supa
-          .from("singers")
-          .select("display_name")
-          .eq("room_id", room.id);
-        if (!eNames && Array.isArray(list)) {
-          const arr = list
-            .map((s: any) => String(s?.display_name || "").trim())
-            .filter(Boolean)
-            .slice(-80);
-          if (alive) setNames(arr);
-        }
-
-        // 3) dernier gagnant (si tirage déjà fait)
+        // 2) dernier gagnant
         const r = await fetch(
           `/api/lottery/state?room_slug=${encodeURIComponent(slug)}`,
           { cache: "no-store" }
@@ -109,14 +93,6 @@ export default function LotteryDisplay({ slug }: { slug: string }) {
     return () => { supa.removeChannel(ch); };
   }, [roomId, slug]);
 
-  // Son
-  function armSound() {
-    const a = new Audio("/ding.mp3");
-    a.load();
-    audioRef.current = a;
-    setSoundReady(true);
-  }
-
   // Confettis
   function fireConfetti(durationMs = 1800) {
     const container = document.createElement("div");
@@ -159,28 +135,31 @@ export default function LotteryDisplay({ slug }: { slug: string }) {
     setTimeout(() => { container.remove(); }, durationMs);
   }
 
-  // Animation slot
+  // Animation slot (~6.3s : 2.5s rapide + ~3.8s ralentissement)
   function runSlotAnimation(finalName: string) {
     setRolling(true);
     setWinnerName(null);
 
-    const pool = names.length ? names : ["🎤", "🍻", "…", "???"];
+    const pool = ["🎤", "🍻", "…", "???"];
     const displayEl = document.getElementById("slot-display")!;
     let idx = 0;
     const interval = 50;
 
+    // Phase 1: 2.5s à vitesse constante
     const t0 = Date.now();
     const phase1 = setInterval(() => {
       displayEl.textContent = pool[idx % pool.length];
       idx++;
-      if (Date.now() - t0 > 1200) {
+      if (Date.now() - t0 > 2500) {
         clearInterval(phase1);
         phase2();
       }
     }, interval);
 
+    // Phase 2: ralentissement (~3.8s) puis stop sur le gagnant
     function phase2() {
-      let steps = 20;
+      const steps = 20;          // nombre d'updates pendant le slowdown
+      const incMs = 15;          // on allonge de 15 ms à chaque tick
       let current = 0;
       const slow = setInterval(() => {
         if (current < steps - 1) {
@@ -192,169 +171,87 @@ export default function LotteryDisplay({ slug }: { slug: string }) {
           displayEl.textContent = finalName || "🎉";
           setRolling(false);
           setWinnerName(finalName || "🎉");
-          if (soundReady && audioRef.current) {
-            try { audioRef.current.currentTime = 0; audioRef.current.play(); } catch {}
-          }
+          // ding (si bloqué par le navigateur, on ignore l’erreur)
+          try { new Audio("/ding.mp3").play().catch(() => {}); } catch {}
           fireConfetti();
         }
-      }, interval + current * 25);
+      }, interval + current * incMs);
     }
   }
-
-  const canArm = useMemo(() => !soundReady, [soundReady]);
 
   return (
     <div
       style={{
         minHeight: "100dvh",
-        display: "flex",
-        flexDirection: "column",
+        display: "grid",
+        placeItems: "center",
+        padding: "24px",
         background:
           "radial-gradient(1200px 600px at 50% -10%, #1e293b 0%, #0b1220 55%, #050a14 100%)",
         color: "#fff",
       }}
     >
-      <header
+      <div
         style={{
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "center",
-          padding: "16px 20px",
-          borderBottom: "1px solid rgba(255,255,255,.1)",
+          width: "min(1100px, 92vw)",
+          textAlign: "center",
+          userSelect: "none",
         }}
       >
-        <div style={{ opacity: 0.9 }}>Salle : <strong>{slug}</strong></div>
-        <div style={{ display: "flex", gap: 8 }}>
-          {canArm && (
-            <button
-              onClick={armSound}
-              style={{
-                padding: "8px 12px",
-                borderRadius: 999,
-                border: "1px solid rgba(255,255,255,.2)",
-                background: "rgba(255,255,255,.08)",
-                color: "#fff",
-                cursor: "pointer",
-              }}
-              title="Armer le son pour l’annonce du gagnant"
-            >
-              🔊 Activer le son
-            </button>
-          )}
-        </div>
-      </header>
-
-      <main
-        style={{
-          flex: 1,
-          display: "grid",
-          placeItems: "center",
-          padding: "24px",
-        }}
-      >
+        {/* Bandeau roulette */}
         <div
           style={{
-            width: "min(1100px, 92vw)",
-            textAlign: "center",
-            userSelect: "none",
+            margin: "0 auto",
+            padding: "16px 20px",
+            borderRadius: 16,
+            background: "linear-gradient(180deg, rgba(255,255,255,.08), rgba(255,255,255,.02))",
+            border: "1px solid rgba(255,255,255,.12)",
+            boxShadow: "0 10px 30px rgba(0,0,0,.35) inset",
           }}
         >
           <div
+            id="slot-display"
             style={{
-              margin: "0 auto",
-              padding: "16px 20px",
-              borderRadius: 16,
-              background: "linear-gradient(180deg, rgba(255,255,255,.08), rgba(255,255,255,.02))",
-              border: "1px solid rgba(255,255,255,.12)",
-              boxShadow: "0 10px 30px rgba(0,0,0,.35) inset",
+              fontSize: "min(10vw, 88px)",
+              lineHeight: 1.1,
+              fontWeight: 900,
+              letterSpacing: ".5px",
+              textShadow: "0 2px 0 rgba(0,0,0,.35)",
+              whiteSpace: "pre-wrap",
+              wordBreak: "break-word",
+              minHeight: "1.2em",
             }}
           >
-            <div
-              id="slot-display"
-              style={{
-                fontSize: "min(10vw, 88px)",
-                lineHeight: 1.1,
-                fontWeight: 900,
-                letterSpacing: ".5px",
-                textShadow: "0 2px 0 rgba(0,0,0,.35)",
-                whiteSpace: "pre-wrap",
-                wordBreak: "break-word",
-                minHeight: "1.2em",
-              }}
-            >
-              {winnerName ?? "Prêt pour le tirage…"}
-            </div>
+            {winnerName ?? "Prêt pour le tirage…"}
           </div>
-
-          <div style={{ marginTop: 14, opacity: 0.85 }}>
-            {rolling
-              ? "Tirage en cours…"
-              : winnerName
-              ? "🎉 Bravo au gagnant !"
-              : "Clique sur Tirer au sort depuis la page Host"}
-          </div>
-
-          {names.length > 0 && (
-            <div
-              style={{
-                margin: "18px auto 0",
-                maxWidth: 900,
-                maxHeight: "28vh",
-                overflow: "auto",
-                padding: "8px 10px",
-                borderRadius: 12,
-                border: "1px dashed rgba(255,255,255,.15)",
-                background: "rgba(255,255,255,.03)",
-                fontSize: 14,
-              }}
-            >
-              <div style={{ display: "flex", gap: 8, flexWrap: "wrap", opacity: 0.85 }}>
-                {names.map((n, i) => (
-                  <span
-                    key={i}
-                    style={{
-                      padding: "4px 8px",
-                      borderRadius: 999,
-                      background: "rgba(255,255,255,.06)",
-                      border: "1px solid rgba(255,255,255,.12)",
-                    }}
-                  >
-                    {n}
-                  </span>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {error && (
-            <div
-              style={{
-                marginTop: 12,
-                padding: "8px 12px",
-                borderRadius: 8,
-                border: "1px solid rgba(255,80,80,.35)",
-                background: "rgba(255,80,80,.08)",
-                color: "#ffd7d7",
-                fontSize: 14,
-              }}
-            >
-              Erreur: {error}
-            </div>
-          )}
         </div>
-      </main>
 
-      <footer
-        style={{
-          padding: "10px 16px",
-          textAlign: "center",
-          borderTop: "1px solid rgba(255,255,255,.1)",
-          opacity: 0.8,
-          fontSize: 13,
-        }}
-      >
-        Écran tirage — {new Date().getFullYear()}
-      </footer>
+        {/* sous-texte minimal */}
+        <div style={{ marginTop: 14, opacity: 0.85 }}>
+          {rolling
+            ? "Tirage en cours…"
+            : winnerName
+            ? "🎉 Bravo au gagnant !"
+            : "Êtes-vous prêt ?"}
+        </div>
+
+        {/* erreurs éventuelles */}
+        {error && (
+          <div
+            style={{
+              marginTop: 12,
+              padding: "8px 12px",
+              borderRadius: 8,
+              border: "1px solid rgba(255,80,80,.35)",
+              background: "rgba(255,80,80,.08)",
+              color: "#ffd7d7",
+              fontSize: 14,
+            }}
+          >
+            Erreur: {error}
+          </div>
+        )}
+      </div>
     </div>
   );
 }

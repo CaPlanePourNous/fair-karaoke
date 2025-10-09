@@ -53,7 +53,7 @@ export default function RoomClient({ slug }: { slug: string }) {
   const [won, setWon] = useState(false);
 
   const [lotteryLoading, setLotteryLoading] = useState(false);
-  const LOTTERY_ANIMATION_DELAY_MS = 6600; // ~6.5 s pour laisser l’écran public finir l’anim
+  const LOTTERY_ANIMATION_DELAY_MS = 7600; // ~6.5 s pour laisser l’écran public finir l’anim
 
 
   // (optionnel) singer id si tu l’utilises ailleurs, pas requis pour /api/requests
@@ -241,8 +241,7 @@ export default function RoomClient({ slug }: { slug: string }) {
         <ul style={{ margin: '6px 0 0 18px' }}>
           <li>2 chansons max par chanteur en même temps.</li>
           <li>Un titre ne peut être chanté qu’une seule fois dans la soirée.</li>
-          <li>File limitée à ~15 titres (≈45 min).</li>
-          <li>Anti-spam : 30 s entre deux demandes.</li>
+          <li>File limitée à 15 titres (≈45 min).</li>
         </ul>
       </div>
 
@@ -469,7 +468,7 @@ export default function RoomClient({ slug }: { slug: string }) {
             {displayName ? displayName : 'Bravo !'}
           </div>
           <div style={{ marginTop: 16, fontSize: 14, opacity: 0.9 }}>
-            Attendez que l’animateur vous fasse signe 😉
+            Approchez-vous du micro 😉
           </div>
         </div>
       )}

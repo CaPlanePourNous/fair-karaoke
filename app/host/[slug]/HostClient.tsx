@@ -172,6 +172,24 @@ export default function HostClient({ slug }: { slug: string }) {
     }
   }
 
+  // --- Retirer une demande (soft delete via DELETE /api/requests/:id)
+  async function removeRequest(id: string | number | undefined) {
+    if (!id && id !== 0) return;
+    const url = `/api/requests/${encodeURIComponent(String(id))}`;
+    try {
+      const r = await fetch(url, { method: "DELETE" });
+      let j: any = {};
+      try { j = await r.json(); } catch {}
+      if (!r.ok || j?.ok !== true) throw new Error(j?.error || `HTTP ${r.status}`);
+      // Recharger la file
+      const d = await fetchQueue();
+      setData(d);
+      setErr(d.ok ? null : d.error || "Erreur");
+    } catch (e: any) {
+      alert(`Suppression impossible: ${e?.message || e}`);
+    }
+  }
+
   // --- util copier ---
   const copy = async (txt: string) => {
     try {
@@ -268,34 +286,45 @@ export default function HostClient({ slug }: { slug: string }) {
                     {!!r.display_name && <div style={{ opacity: 0.85 }}>👤 {r.display_name}</div>}
                   </div>
 
-                  {/* Sur les 2 premiers : deux boutons copier (titre+artiste ET nom) */}
-                  {idx < 2 && (
-                    <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                      <button
-                        style={btn}
-                        onClick={() => copy(`${r.title} — ${r.artist}`)}
-                        title="Copier titre + artiste"
-                      >
-                        📋 Copier titre + artiste
-                      </button>
+                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                    {/* Sur les 2 premiers : deux boutons copier (titre+artiste ET nom) */}
+                    {idx < 2 && (
+                      <>
+                        <button
+                          style={btn}
+                          onClick={() => copy(`${r.title} — ${r.artist}`)}
+                          title="Copier titre + artiste"
+                        >
+                          📋 Copier titre + artiste
+                        </button>
 
-                      <button
-                        style={{
-                          ...btn,
-                          cursor: r.display_name ? "pointer" : "not-allowed",
-                          opacity: r.display_name ? 1 : 0.6,
-                        }}
-                        onClick={() => {
-                          const name = (r.display_name || "").trim();
-                          if (name) copy(name);
-                        }}
-                        disabled={!r.display_name}
-                        title="Copier nom du chanteur"
-                      >
-                        📋 Copier nom
-                      </button>
-                    </div>
-                  )}
+                        <button
+                          style={{
+                            ...btn,
+                            cursor: r.display_name ? "pointer" : "not-allowed",
+                            opacity: r.display_name ? 1 : 0.6,
+                          }}
+                          onClick={() => {
+                            const name = (r.display_name || "").trim();
+                            if (name) copy(name);
+                          }}
+                          disabled={!r.display_name}
+                          title="Copier nom du chanteur"
+                        >
+                          📋 Copier nom
+                        </button>
+                      </>
+                    )}
+
+                    {/* Nouveau bouton Retirer */}
+                    <button
+                      style={{ ...btn, borderColor: "#e4c0c0", background: "#ffecec" }}
+                      onClick={() => removeRequest(r.id)}
+                      title="Retirer de la file"
+                    >
+                      🗑 Retirer
+                    </button>
+                  </div>
                 </li>
               ))}
             </ol>

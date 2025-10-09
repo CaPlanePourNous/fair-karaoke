@@ -25,6 +25,7 @@ export async function GET(req: NextRequest) {
         .from("requests")
         .select("id, title, artist, singer_id, created_at, is_playing")
         .eq("room_id", room.id)
+        .in("status", ["waiting", "playing"])
         .order("created_at", { ascending: true });
       reqs = data ?? null;
       eReq = error ?? null;

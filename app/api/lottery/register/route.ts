@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createAdminSupabaseClient } from "@/lib/supabaseServer";
+import { containsProfanity } from "@/lib/moderation";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -46,6 +47,15 @@ export async function POST(req: NextRequest) {
     const display_name = (body.display_name || "").trim();
     if (!display_name) {
       return NextResponse.json({ ok: false, error: "MISSING_DISPLAY_NAME" }, { status: 400, headers: noStore });
+    }
+
+    // 🔒 Profanity guard
+    const bad = containsProfanity(display_name);
+    if (bad) {
+      return NextResponse.json(
+        { ok: false, error: "DISPLAY_NAME_PROFANE", term: bad },
+        { status: 400, headers: noStore }
+      );
     }
 
     // Résoudre room_id (priorité: body.room_id > body.room_slug > referer)

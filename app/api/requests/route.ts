@@ -1,77 +1,300 @@
-import { NextRequest, NextResponse } from "next/server";
-import { createAdminSupabaseClient } from "@/lib/supabaseServer";
-import { containsProfanity } from "@/lib/moderation";
+'use client';
 
-export const runtime = "nodejs";
-export const dynamic = "force-dynamic";
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { RoomQueueModal } from '@/components/RoomQueueModal';
 
-export async function POST(req: NextRequest) {
-  try {
-    const db = createAdminSupabaseClient();
-    const body = await req.json().catch(() => ({}));
+type Suggestion = {
+  id?: string | number;
+  karafun_id?: string | number;
+  title: string;
+  artist?: string | null;
+};
 
-    const slug = (body.room_slug || "").trim();
-    const display_name = (body.display_name || "").trim();
-    const title = (body.title || "").trim();
-    const artist = (body.artist || "").trim(); // peut valoir "Inconnu"
-    const karafun_id = String(body.karafun_id || "").trim();
+type SearchResponse =
+  | { ok: true; items: Suggestion[] }
+  | { ok: false; error: string }
+  | Suggestion[];
 
-    if (!slug || !display_name) {
-      return NextResponse.json({ ok: false, error: "MISSING_ROOM_OR_NAME" }, { status: 400 });
+export default function RoomClient({ slug }: { slug: string }) {
+  // --- États de base ---
+  const [displayName, setDisplayName] = useState('');
+  const [msg, setMsg] = useState<string | null>(null);
+
+  // --- Recherche KaraFun ---
+  const [q, setQ] = useState('');
+  const [list, setList] = useState<Suggestion[]>([]);
+  const [loadingSearch, setLoadingSearch] = useState(false);
+
+  // --- Sélection + champs non éditables ---
+  const [selected, setSelected] = useState<Suggestion | null>(null);
+  const [titleField, setTitleField] = useState('');
+  const [artistField, setArtistField] = useState('');
+
+  // --- Limite (si tu veux la brancher sur tes stats plus tard) ---
+  const [limitReached] = useState(false); // garde-fou neutre
+
+  // --- Utils ---
+  function toUserMessage(e: any): string {
+    if (typeof e === 'string') return e;
+    if (e?.message) return String(e.message);
+    return 'Une erreur est survenue.';
     }
-    if (!title) {
-      return NextResponse.json({ ok: false, error: "MISSING_TITLE" }, { status: 400 });
+
+  // ============================
+  // Recherche KaraFun (client → API maison)
+  // Essaie /api/search/karafun puis /api/karaoke/search (pour rester compatible)
+  // ============================
+  async function searchKarafun(query: string) {
+    const qtrim = query.trim();
+    if (qtrim.length < 2) {
+      setList([]);
+      return;
     }
+    setLoadingSearch(true);
+    setMsg(null);
+    try {
+      // tentative 1 : /api/search/karafun
+      let r = await fetch(`/api/search/karafun?q=${encodeURIComponent(qtrim)}`, { cache: 'no-store' });
+      let j: SearchResponse | null = null;
+      try { j = await r.json(); } catch { j = null; }
 
-    // Room
-    const { data: room, error: eRoom } = await db
-      .from("rooms").select("id").eq("slug", slug).maybeSingle();
-    if (eRoom)  return NextResponse.json({ ok: false, error: eRoom.message }, { status: 500 });
-    if (!room)  return NextResponse.json({ ok: false, error: "ROOM_NOT_FOUND" }, { status: 404 });
-
-    // Profanity (au cas où)
-    const bad = containsProfanity(display_name);
-    if (bad) return NextResponse.json({ ok: false, error: "DISPLAY_NAME_PROFANE" }, { status: 400 });
-
-    // Trouver/créer singer à partir du display_name (flux historique)
-    const { data: singer, error: eSel } = await db
-      .from("singers").select("id").eq("room_id", room.id).eq("display_name", display_name).maybeSingle();
-    if (eSel) return NextResponse.json({ ok: false, error: eSel.message }, { status: 500 });
-
-    let singer_id = singer?.id as string | undefined;
-    if (!singer_id) {
-      const { data: created, error: eInsSinger } = await db
-        .from("singers").insert({ room_id: room.id, display_name }).select("id").single();
-      if (eInsSinger || !created?.id) {
-        return NextResponse.json({ ok: false, error: eInsSinger?.message || "DB_INSERT_SINGER_FAILED" }, { status: 500 });
+      if (!r.ok || !j) {
+        // tentative 2 : /api/karaoke/search
+        r = await fetch(`/api/karaoke/search?q=${encodeURIComponent(qtrim)}`, { cache: 'no-store' });
+        try { j = await r.json(); } catch { j = null; }
       }
-      singer_id = created.id as string;
+
+      let items: Suggestion[] = [];
+      if (Array.isArray(j)) {
+        items = j as Suggestion[];
+      } else if (j && (j as any).ok === true && Array.isArray((j as any).items)) {
+        items = (j as any).items as Suggestion[];
+      }
+
+      // normalisation rapide
+      items = (items || [])
+        .filter(x => x && x.title)
+        .map(x => ({
+          ...x,
+          karafun_id: x.karafun_id ?? x.id, // on garde un id numérique pour l’envoi
+        }));
+
+      setList(items);
+    } catch (e) {
+      setMsg(toUserMessage(e));
+    } finally {
+      setLoadingSearch(false);
+    }
+  }
+
+  // ============================
+  // Soumission d'une demande (un seul bouton)
+  // ============================
+  async function submitRequest() {
+    const name = displayName.trim();
+    if (!name) {
+      setMsg('Renseigne ton nom avant de demander un titre.');
+      return;
+    }
+    if (limitReached) {
+      setMsg('La file est pleine. Réessaie plus tard.');
+      return;
+    }
+    if (!selected || !(selected.karafun_id ?? selected.id)) {
+      setMsg('Choisis un titre dans la liste.');
+      return;
     }
 
-    // Insert request
-    const payload: any = {
-      room_id: room.id,
-      singer_id,
-      title,
-      artist: artist || "Inconnu",
-      provider: karafun_id ? "karafun" : null,
-      provider_track_id: karafun_id || null,
-      status: "waiting",
-      created_at: new Date().toISOString(),
+    const trackId = String(selected.karafun_id ?? selected.id);
+    const payload = {
+      room_slug: slug,
+      display_name: name,
+      title: titleField || selected.title,
+      artist: artistField || selected.artist || '',
+      provider: 'karafun',
+      track_id: trackId,
+      karafun_id: trackId, // compat éventuelle côté serveur
     };
 
-    const { data: ins, error: eIns } = await db
-      .from("requests")
-      .insert(payload)
-      .select("id")
-      .single();
+    try {
+      const r = await fetch('/api/requests', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
 
-    if (eIns || !ins?.id) {
-      return NextResponse.json({ ok: false, error: eIns?.message || "DB_INSERT_REQUEST_FAILED" }, { status: 500 });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok || j?.ok === false) {
+        setMsg(toUserMessage(j?.error || 'Demande refusée'));
+        return;
+      }
+
+      setMsg('🎶 Demande enregistrée !');
+      setQ('');
+      setList([]);
+      setSelected(null);
+      setTitleField('');
+      setArtistField('');
+    } catch (e) {
+      setMsg(toUserMessage(e));
     }
-
-    return NextResponse.json({ ok: true, id: ins.id });
-  } catch (e: any) {
-    return NextResponse.json({ ok: false, error: e?.message || "UNKNOWN" }, { status: 500 });
   }
+
+  // ============================
+  // Rendu
+  // ============================
+  const karaFunLink = `https://www.karafun.fr/search/?q=${encodeURIComponent(q.trim())}`;
+
+  return (
+    <div className="space-y-4">
+      {/* Nom / Message */}
+      <div className="space-y-2">
+        <label className="block text-sm font-medium">Ton nom (affiché)</label>
+        <input
+          value={displayName}
+          onChange={(e) => setDisplayName(e.target.value)}
+          placeholder="Ex: MARTIN"
+          className="w-full rounded-md border px-3 py-2"
+        />
+        {msg ? <div className="text-sm text-blue-700">{msg}</div> : null}
+      </div>
+
+      {/* Recherche KaraFun */}
+      <div className="space-y-2">
+        <label className="block text-sm font-medium">Recherche KaraFun</label>
+        <div className="flex gap-2">
+          <input
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            placeholder="Tape un titre ou un artiste"
+            className="flex-1 rounded-md border px-3 py-2"
+          />
+          <button
+            onClick={() => searchKarafun(q)}
+            disabled={loadingSearch}
+            className="rounded-md border px-3 py-2"
+          >
+            {loadingSearch ? '…' : 'Rechercher'}
+          </button>
+        </div>
+        <a
+          href={karaFunLink}
+          target="_blank"
+          rel="noreferrer"
+          className="text-xs text-blue-600 underline"
+        >
+          Voir sur KaraFun ↗
+        </a>
+
+        {/* Résultats : clic = sélection (pas de bouton par ligne) */}
+        {list.length > 0 && (
+          <ul
+            className="mt-2"
+            style={{
+              border: '1px solid #ccc',
+              borderRadius: 6,
+              maxHeight: 320,
+              overflowY: 'auto',
+              margin: '0 0 12px',
+              padding: 6
+            }}
+          >
+            {list.map((s, i) => {
+              const isSel =
+                selected &&
+                (String(selected.karafun_id ?? selected.id) === String(s.karafun_id ?? s.id));
+              return (
+                <li
+                  key={`${s.karafun_id ?? s.id ?? i}`}
+                  onClick={() => {
+                    setSelected(s);
+                    setTitleField(s.title);
+                    setArtistField(s.artist ?? '');
+                  }}
+                  style={{
+                    padding: '8px 6px',
+                    borderBottom: '1px solid #eee',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    gap: 8,
+                    cursor: 'pointer',
+                    background: isSel ? '#eef6ff' : '#fff',
+                    borderRadius: 4,
+                  }}
+                  title="Cliquer pour sélectionner ce titre"
+                >
+                  <div style={{ minWidth: 0 }}>
+                    <div
+                      style={{
+                        fontWeight: 600,
+                        whiteSpace: 'nowrap',
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis',
+                      }}
+                    >
+                      {s.title}
+                    </div>
+                    <div
+                      style={{
+                        fontSize: 13,
+                        opacity: 0.8,
+                        whiteSpace: 'nowrap',
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis',
+                      }}
+                    >
+                      {s.artist || 'Artiste inconnu'}
+                    </div>
+                  </div>
+                  {isSel ? <span style={{ fontSize: 12, opacity: 0.8 }}>Sélectionné</span> : null}
+                </li>
+              );
+            })}
+          </ul>
+        )}
+      </div>
+
+      {/* Champs Titre / Artiste en lecture seule + bouton unique */}
+      <div className="space-y-2">
+        <label className="block text-sm font-medium">Titre</label>
+        <input
+          value={titleField}
+          onChange={() => {}}
+          readOnly
+          placeholder="Choisis un titre dans la liste"
+          className="w-full rounded-md border px-3 py-2 bg-gray-50"
+        />
+
+        <label className="block text-sm font-medium">Artiste</label>
+        <input
+          value={artistField}
+          onChange={() => {}}
+          readOnly
+          placeholder="Rempli automatiquement"
+          className="w-full rounded-md border px-3 py-2 bg-gray-50"
+        />
+
+        <div className="flex justify-end">
+          <button
+            onClick={submitRequest}
+            disabled={limitReached || !selected}
+            title={!selected ? 'Sélectionne un titre dans la liste' : 'Envoyer la demande'}
+            className={`rounded-md border px-4 py-2 ${limitReached || !selected ? 'opacity-50 cursor-not-allowed' : ''}`}
+          >
+            Demander ce titre
+          </button>
+        </div>
+      </div>
+
+      {/* Bouton Voir la file (modale toggle) */}
+      <div className="flex items-center">
+        <RoomQueueModal
+          slug={slug}
+          triggerClassName="px-2 py-1 rounded-md border text-sm bg-white shadow-sm"
+          label="Voir la file"
+        />
+      </div>
+    </div>
+  );
 }

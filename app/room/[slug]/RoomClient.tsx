@@ -315,6 +315,7 @@ export default function RoomClient({ slug }: { slug: string }) {
                   setSelected(s);
                   setTitleField(s.title);
                   setArtistField(s.artist ?? '');
+		setList([]);
                 }}
                 style={{
                   padding: '8px 6px',

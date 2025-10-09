@@ -7,8 +7,8 @@ import { RoomQueueModal } from '@/components/RoomQueueModal';
 type Suggestion = {
   title: string;
   artist: string | null;
-  karafun_id?: string;           // id renvoyé par /api/search
-  id?: string | number;          // fallback éventuel
+  karafun_id?: string; // id renvoyé par /api/search
+  id?: string | number; // fallback éventuel
   url?: string;
 };
 
@@ -54,7 +54,7 @@ export default function RoomClient({ slug }: { slug: string }) {
 
   const [lotteryLoading, setLotteryLoading] = useState(false);
 
-  // (optionnel) singer id si tu l’utilises ailleurs, pas requis pour /api/requests
+  // (optionnel) singer id si tu l’utilises ailleurs; pas requis pour /api/requests
   const singerIdRef = useRef<string | null>(null);
 
   // Stats d’attente
@@ -77,7 +77,6 @@ export default function RoomClient({ slug }: { slug: string }) {
   // Scroll le message dans la vue dès qu’on en a un
   useEffect(() => {
     if (msg && msgRef.current) {
-      // le timeout laisse le DOM peindre le message avant de scroller
       setTimeout(() => {
         msgRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
       }, 0);

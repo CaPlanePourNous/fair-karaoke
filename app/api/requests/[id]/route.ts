@@ -5,34 +5,35 @@ import { createAdminSupabaseClient } from "@/lib/supabaseServer";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-// DELETE /api/requests/:id  --> soft delete: status = 'removed'
+// DELETE /api/requests/:id  → suppression définitive
 export async function DELETE(
   _req: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
+  { params }: { params: { id: string } }
 ) {
-  const { id } = await params;
+  const id = params?.id;
   if (!id) {
     return NextResponse.json({ ok: false, error: "MISSING_ID" }, { status: 400 });
   }
 
   const db = createAdminSupabaseClient();
 
-  // Vérifie que la requête existe
-  const { data: reqRow, error: eSel } = await db
+  // Vérifier l’existence (optionnel mais utile pour un 404 propre)
+  const { data: row, error: eSel } = await db
     .from("requests")
-    .select("id, status")
+    .select("id")
     .eq("id", id)
     .maybeSingle();
-  if (eSel) return NextResponse.json({ ok: false, error: eSel.message }, { status: 500 });
-  if (!reqRow) return NextResponse.json({ ok: false, error: "REQUEST_NOT_FOUND" }, { status: 404 });
 
-  // Soft delete
-  const { error: eUpd } = await db
+  if (eSel) return NextResponse.json({ ok: false, error: eSel.message }, { status: 500 });
+  if (!row) return NextResponse.json({ ok: false, error: "REQUEST_NOT_FOUND" }, { status: 404 });
+
+  // Suppression
+  const { error: eDel } = await db
     .from("requests")
-    .update({ status: "removed", deleted_at: new Date().toISOString() })
+    .delete()
     .eq("id", id);
 
-  if (eUpd) return NextResponse.json({ ok: false, error: eUpd.message }, { status: 500 });
+  if (eDel) return NextResponse.json({ ok: false, error: eDel.message }, { status: 500 });
 
   return NextResponse.json({ ok: true });
 }

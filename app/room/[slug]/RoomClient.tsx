@@ -57,6 +57,15 @@ export default function RoomClient({ slug }: { slug: string }) {
   // (optionnel) singer id si tu l’utilises ailleurs, pas requis pour /api/requests
   const singerIdRef = useRef<string | null>(null);
 
+  // ✅ NEW: entry_id en state pour (re)brancher Realtime/polling sans reload
+  const [entryId, setEntryId] = useState<string | null>(null);
+
+  // au montage, récupérer l'entry_id existant
+  useEffect(() => {
+    const saved = loadEntryId();
+    if (saved) setEntryId(saved);
+  }, []);
+
   // Stats d’attente
   const [stats, setStats] = useState<{ total_waiting: number; est_minutes: number } | null>(null);
   useEffect(() => {
@@ -163,9 +172,8 @@ export default function RoomClient({ slug }: { slug: string }) {
     setMsg('Son activé ✅');
   }
 
-  // Realtime tirage
+  // ✅ Realtime tirage (branché sur entryId)
   useEffect(() => {
-    const entryId = loadEntryId();
     if (!entryId) return;
     const ch = supa
       .channel('lottery-win-' + entryId)
@@ -181,15 +189,14 @@ export default function RoomClient({ slug }: { slug: string }) {
       )
       .subscribe();
     return () => { supa.removeChannel(ch); };
-  }, [ding]);
+  }, [entryId, ding]);
 
-  // Polling secours
+  // ✅ Polling secours (branché sur entryId)
   useEffect(() => {
-    const entryId = loadEntryId();
     if (!entryId) return;
     const it = setInterval(async () => {
       try {
-        const r = await fetch('/api/lottery/has-won?entry_id=' + entryId);
+        const r = await fetch('/api/lottery/has-won?entry_id=' + encodeURIComponent(entryId), { cache: 'no-store' });
         const d = await r.json();
         if (d?.won) {
           if (!won) {
@@ -203,7 +210,7 @@ export default function RoomClient({ slug }: { slug: string }) {
       } catch {}
     }, 8000);
     return () => clearInterval(it);
-  }, [ding, won]);
+  }, [entryId, ding, won]);
 
   const karaFunLink = `https://www.karafun.fr/search/?q=${encodeURIComponent(q.trim())}`;
 
@@ -315,7 +322,7 @@ export default function RoomClient({ slug }: { slug: string }) {
                   setSelected(s);
                   setTitleField(s.title);
                   setArtistField(s.artist ?? '');
-		setList([]);
+                  setList([]);
                 }}
                 style={{
                   padding: '8px 6px',
@@ -411,7 +418,9 @@ export default function RoomClient({ slug }: { slug: string }) {
               setMsg(map[code] ?? `Inscription impossible: ${code}`);
               return;
             }
+            // ✅ sauvegarde + informe les hooks
             saveEntryId(d.id);
+            setEntryId(d.id);
             setMsg('Inscription au tirage enregistrée ✅');
           } catch (e) {
             setMsg(toUserMessage(e));

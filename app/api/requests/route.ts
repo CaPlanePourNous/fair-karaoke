@@ -1,125 +1,178 @@
-import { NextRequest, NextResponse } from "next/server";
-import { createAdminSupabaseClient } from "@/lib/supabaseServer";
-import { containsProfanity } from "@/lib/moderation";
+// app/api/requests/route.ts
+import { NextRequest, NextResponse } from 'next/server';
+import { createAdminSupabaseClient } from '@/lib/supabaseServer';
 
-export const runtime = "nodejs";
-export const dynamic = "force-dynamic";
+export const runtime = 'nodejs';
+export const dynamic = 'force-dynamic';
+
+type Body = {
+  room_slug?: string;
+  room_id?: string;
+  singer_id?: string;
+  display_name?: string;
+  title?: string;
+  artist?: string;
+  karafun_id?: string | null;
+};
+
+function getClientIp(req: NextRequest): string {
+  const xf = req.headers.get('x-forwarded-for');
+  if (xf) return xf.split(',')[0].trim();
+  const xr = req.headers.get('x-real-ip');
+  if (xr) return xr.trim();
+  return '0.0.0.0';
+}
+
+function inferRoomSlugFromReferer(req: NextRequest): string | null {
+  const ref = req.headers.get('referer') || '';
+  // ex: https://site/room/lantignie → slug=lantignie
+  const m = ref.match(/\/room\/([^/?#]+)/i);
+  return m?.[1] ? decodeURIComponent(m[1]) : null;
+}
 
 export async function POST(req: NextRequest) {
+  const db = createAdminSupabaseClient();
+
   try {
-    const db = createAdminSupabaseClient();
-    const body = await req.json().catch(() => ({} as any));
+    const body = (await req.json().catch(() => ({}))) as Body;
+    const ip = getClientIp(req);
 
-    const room_slug = (body.room_slug || "").trim();
-    const display_name = (body.display_name || "").trim();
-    const singer_id = (body.singer_id || "").trim(); // OK si tu envoies directement singer_id
+    const title = (body.title || '').trim();
+    const artist = (body.artist || '').trim();
+    const karafun_id = body.karafun_id ?? null;
 
-    // Demande via catalogue obligatoire
-    const provider = (body.provider || "").trim();       // "karafun"
-    const track_id = String(body.track_id || body.karafun_id || "").trim(); // id numérique attendu
-    const title = (body.title || "").trim();
-    const artist = (body.artist || "").trim();
-
-    if (!room_slug) return NextResponse.json({ ok: false, error: "MISSING_ROOM_SLUG" }, { status: 400 });
-    if (!title)     return NextResponse.json({ ok: false, error: "MISSING_TITLE" }, { status: 400 });
-    if (provider !== "karafun" || !/^\d{2,}$/.test(track_id)) {
-      return NextResponse.json({ ok: false, error: "INVALID_TRACK" }, { status: 400 });
+    if (!title || !artist) {
+      return NextResponse.json({ ok: false, error: 'Champs manquants (title, artist).' }, { status: 400 });
     }
 
-    // 1) Room
-    const { data: room, error: eRoom } = await db
-      .from("rooms")
-      .select("id")
-      .eq("slug", room_slug)
-      .maybeSingle();
-    if (eRoom)  return NextResponse.json({ ok: false, error: eRoom.message }, { status: 500 });
-    if (!room)  return NextResponse.json({ ok: false, error: "ROOM_NOT_FOUND" }, { status: 404 });
-
-    // 2) Singer
-    let effectiveSingerId = singer_id;
-    if (!effectiveSingerId) {
-      // Si front n’envoie pas singer_id, on le retrouve/crée via display_name (back compat)
-      if (!display_name) {
-        return NextResponse.json({ ok: false, error: "MISSING_SINGER" }, { status: 400 });
+    // 1) Résoudre la salle (slug prioritaire, sinon id, sinon referer)
+    let roomId = (body.room_id || '').trim();
+    if (!roomId) {
+      let slug = (body.room_slug || '').trim();
+      if (!slug) slug = inferRoomSlugFromReferer(req) || '';
+      if (!slug) {
+        return NextResponse.json({ ok: false, error: 'room_slug requis (ou déduction impossible)' }, { status: 400 });
       }
-      const bad = containsProfanity(display_name);
-      if (bad) {
-        return NextResponse.json(
-          { ok: false, error: "DISPLAY_NAME_PROFANE", term: bad },
-          { status: 400 }
-        );
-      }
-      // chercher chanteur
-      const { data: existing, error: eSel } = await db
-        .from("singers")
-        .select("id")
-        .eq("room_id", room.id)
-        .eq("display_name", display_name)
+      const { data: room, error: eRoom } = await db
+        .from('rooms')
+        .select('id')
+        .eq('slug', slug)
         .maybeSingle();
-      if (eSel) return NextResponse.json({ ok: false, error: eSel.message }, { status: 500 });
+      if (eRoom) return NextResponse.json({ ok: false, error: eRoom.message }, { status: 500 });
+      if (!room) return NextResponse.json({ ok: false, error: 'Salle inconnue' }, { status: 404 });
+      roomId = room.id as string;
+    }
+
+    // 2) Trouver/créer le chanteur si singer_id non fourni
+    let singerId = (body.singer_id || '').trim();
+    const displayName = (body.display_name || '').trim();
+    if (!singerId) {
+      if (!displayName) {
+        return NextResponse.json({ ok: false, error: 'display_name ou singer_id requis' }, { status: 400 });
+      }
+      const { data: existing } = await db
+        .from('singers')
+        .select('id')
+        .eq('room_id', roomId)
+        .eq('display_name', displayName)
+        .maybeSingle();
 
       if (existing?.id) {
-        effectiveSingerId = existing.id as string;
+        singerId = existing.id as string;
       } else {
-        const { data: created, error: eInsSinger } = await db
-          .from("singers")
-          .insert({ room_id: room.id, display_name })
-          .select("id")
+        const { data: ins, error: eIns } = await db
+          .from('singers')
+          .insert({ room_id: roomId, display_name: displayName, is_present: true })
+          .select('id')
           .single();
-        if (eInsSinger || !created?.id) {
-          return NextResponse.json(
-            { ok: false, error: eInsSinger?.message || "DB_INSERT_SINGER_FAILED" },
-            { status: 500 }
-          );
-        }
-        effectiveSingerId = created.id as string;
-      }
-    } else {
-      // si singer_id fourni, on vérifie et filtre son nom (au cas où)
-      const { data: s, error: eS } = await db
-        .from("singers")
-        .select("display_name")
-        .eq("id", effectiveSingerId)
-        .maybeSingle();
-      if (eS) return NextResponse.json({ ok: false, error: eS.message }, { status: 500 });
-      if (!s) return NextResponse.json({ ok: false, error: "SINGER_NOT_FOUND" }, { status: 404 });
-      const bad = containsProfanity(s.display_name || "");
-      if (bad) {
-        return NextResponse.json(
-          { ok: false, error: "DISPLAY_NAME_PROFANE", term: bad },
-          { status: 400 }
-        );
+        if (eIns) return NextResponse.json({ ok: false, error: eIns.message }, { status: 500 });
+        singerId = ins.id as string;
       }
     }
 
-    // 3) Insert request (on tente avec colonnes provider_*, fallback sans si la DB ne les a pas)
-    const withProvider: any = {
-      room_id: room.id,
-      singer_id: effectiveSingerId,
-      title,
-      artist: artist || null,
-      provider: "karafun",
-      provider_track_id: track_id,
-      provider_url: `https://www.karafun.fr/search/?q=${encodeURIComponent(title)}`,
-    };
-
-    let ins = await db.from("requests").insert(withProvider).select("id").single();
-
-    // colonne inconnue → fallback sans les provider_*
-    if (ins.error && (ins.error as any).code === "42703") {
-      const { provider, provider_track_id, provider_url, ...fallback } = withProvider;
-      ins = await db.from("requests").insert(fallback).select("id").single();
+    // 3) R5 — doublon (même titre+artiste) dans la salle, incluant done
+    {
+      const { count, error } = await db
+        .from('requests')
+        .select('*', { head: true, count: 'exact' })
+        .eq('room_id', roomId)
+        .eq('title', title)
+        .eq('artist', artist)
+        .in('status', ['waiting', 'playing', 'done']);
+      if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
+      if ((count ?? 0) > 0) {
+        return NextResponse.json({ ok: false, error: 'Titre déjà présent (doublon interdit).' }, { status: 400 });
+      }
     }
 
-    if (ins.error || !ins.data?.id) {
-      return NextResponse.json(
-        { ok: false, error: ins.error?.message || "DB_INSERT_REQUEST_FAILED" },
-        { status: 500 }
-      );
+    // 4) R1 — max 2 chansons par chanteur (waiting + playing)
+    {
+      const { count, error } = await db
+        .from('requests')
+        .select('*', { head: true, count: 'exact' })
+        .eq('room_id', roomId)
+        .eq('singer_id', singerId)
+        .in('status', ['waiting', 'playing']);
+      if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
+      if ((count ?? 0) >= 2) {
+        return NextResponse.json({ ok: false, error: '2 chansons max par chanteur.' }, { status: 400 });
+      }
     }
 
-    return NextResponse.json({ ok: true, id: ins.data.id });
-  } catch (e: any) {
-    return NextResponse.json({ ok: false, error: e?.message || "UNKNOWN" }, { status: 500 });
+    // 5) Anti-spam IP — ≥30s entre 2 demandes de la même IP (dans cette salle)
+    {
+      const { data: last } = await db
+        .from('requests')
+        .select('created_at')
+        .eq('room_id', roomId)
+        .eq('ip', ip)
+        .order('created_at', { ascending: false })
+        .limit(1);
+      const lastAt = last?.[0]?.created_at ? Date.parse(last[0].created_at as any) : 0;
+      if (lastAt && Date.now() - lastAt < 30_000) {
+        return NextResponse.json({ ok: false, error: 'Merci d’attendre 30s avant une nouvelle demande.' }, { status: 400 });
+      }
+    }
+
+    // 6) R4 — file limitée à 15 (waiting uniquement)
+    {
+      const { count, error } = await db
+        .from('requests')
+        .select('*', { head: true, count: 'exact' })
+        .eq('room_id', roomId)
+        .eq('status', 'waiting');
+      if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
+      if ((count ?? 0) >= 15) {
+        return NextResponse.json({ ok: false, error: 'File d’attente pleine (15 titres max).' }, { status: 400 });
+      }
+    }
+
+    // 7) Insert
+    const { data: insReq, error: eInsReq } = await db
+      .from('requests')
+      .insert({
+        room_id: roomId,
+        singer_id: singerId,
+        // Fallback legacy si ta table a encore la colonne texte `singer`
+        singer: displayName || null,
+        title,
+        artist,
+        karafun_id,
+        ip,
+        status: 'waiting',
+        created_at: new Date().toISOString(),
+      })
+      .select('id')
+      .single();
+
+    if (eInsReq) {
+      return NextResponse.json({ ok: false, error: eInsReq.message }, { status: 500 });
+    }
+
+    return NextResponse.json({ ok: true, id: insReq.id });
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : String(e);
+    console.error('Erreur /api/requests:', msg);
+    return NextResponse.json({ ok: false, error: msg }, { status: 500 });
   }
 }

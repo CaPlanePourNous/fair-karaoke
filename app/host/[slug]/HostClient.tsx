@@ -154,11 +154,10 @@ export default function HostClient({ slug }: { slug: string }) {
       let j: any = {};
       try { j = await r.json(); } catch {}
       if (!r.ok || j?.ok === false) throw new Error(j?.error || `HTTP ${r.status}`);
-      alert("🎉 Tirage effectué !");
       const st = await fetchLotteryState();
       setLotteryInfo(st);
     } catch (e: any) {
-      alert(String(e?.message || "Échec du tirage"));
+      console.warn("Lottery draw failed:", e?.message || e);
     } finally {
       setLotteryBusy(false);
     }

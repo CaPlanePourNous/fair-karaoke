@@ -53,6 +53,8 @@ export default function RoomClient({ slug }: { slug: string }) {
   const [won, setWon] = useState(false);
 
   const [lotteryLoading, setLotteryLoading] = useState(false);
+  const LOTTERY_ANIMATION_DELAY_MS = 5600; // ~5.5 s pour laisser l’écran public finir l’anim
+
 
   // (optionnel) singer id si tu l’utilises ailleurs, pas requis pour /api/requests
   const singerIdRef = useRef<string | null>(null);
@@ -181,11 +183,13 @@ export default function RoomClient({ slug }: { slug: string }) {
         'postgres_changes',
         { event: 'INSERT', schema: 'public', table: 'lottery_winners', filter: `entry_id=eq.${entryId}` },
         () => {
+	setTimeout(() => {
           setWon(true);
           setMsg('🎉 Tu as été tiré au sort !');
           if (ding) { ding.currentTime = 0; ding.play().catch(() => {}); }
           if (navigator.vibrate) navigator.vibrate([200, 100, 200]);
-        }
+        }, LOTTERY_ANIMATION_DELAY_MS);
+  }
       )
       .subscribe();
     return () => { supa.removeChannel(ch); };
@@ -199,14 +203,16 @@ export default function RoomClient({ slug }: { slug: string }) {
         const r = await fetch('/api/lottery/has-won?entry_id=' + encodeURIComponent(entryId), { cache: 'no-store' });
         const d = await r.json();
         if (d?.won) {
-          if (!won) {
-            setWon(true);
-            setMsg('🎉 Tu as été tiré au sort !');
-            if (ding) { ding.currentTime = 0; ding.play().catch(() => {}); }
-            if (navigator.vibrate) navigator.vibrate([200, 100, 200]);
-          }
-          clearInterval(it);
-        }
+  if (!won) {
+    setTimeout(() => {
+      setWon(true);
+      setMsg('🎉 Tu as été tiré au sort !');
+      if (ding) { ding.currentTime = 0; ding.play().catch(() => {}); }
+      if (navigator.vibrate) navigator.vibrate([200, 100, 200]);
+    }, LOTTERY_ANIMATION_DELAY_MS);
+  }
+  clearInterval(it);
+}
       } catch {}
     }, 8000);
     return () => clearInterval(it);

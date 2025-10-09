@@ -19,11 +19,11 @@ export default function LotteryDisplay({ slug }: { slug: string }) {
   const [winnerName, setWinnerName] = useState<string | null>(null);
   const [rolling, setRolling] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [names, setNames] = useState<string[]>([]); // facultatif pour le bandeau (on peut le laisser vide)
+  const [names, setNames] = useState<string[]>([]);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const [soundReady, setSoundReady] = useState(false);
 
-  // Charger room_id et dernier gagnant (au cas où la page arrive après un tirage)
+  // Charger room_id + noms + dernier gagnant
   useEffect(() => {
     let alive = true;
     (async () => {
@@ -40,32 +40,29 @@ export default function LotteryDisplay({ slug }: { slug: string }) {
         if (!alive) return;
         setRoomId(room.id as string);
 
-        // 2) optionnel: charger quelques noms (affichage bandeau)
-        //    on va juste prendre les chanteurs inscrits au karaoké (ou lottery_entries s’il y a RLS)
-        //    Pour rester simple et robuste: on n’affiche rien si ça échoue.
-        supa
+        // 2) charger quelques noms (facultatif pour le bandeau)
+        const { data: list, error: eNames } = await supa
           .from("singers")
           .select("display_name")
-          .eq("room_id", room.id)
-          .then(({ data }) => {
-            const arr = (data || [])
-              .map((s: any) => String(s?.display_name || "").trim())
-              .filter(Boolean)
-              .slice(-80);
-            setNames(arr);
-          })
-          .catch(() => { /* ignore */ });
+          .eq("room_id", room.id);
+        if (!eNames && Array.isArray(list)) {
+          const arr = list
+            .map((s: any) => String(s?.display_name || "").trim())
+            .filter(Boolean)
+            .slice(-80);
+          if (alive) setNames(arr);
+        }
 
-        // 3) dernier gagnant (pour afficher si tirage déjà fait)
-        const r = await fetch(`/api/lottery/state?room_slug=${encodeURIComponent(slug)}`, { cache: "no-store" });
+        // 3) dernier gagnant (si tirage déjà fait)
+        const r = await fetch(
+          `/api/lottery/state?room_slug=${encodeURIComponent(slug)}`,
+          { cache: "no-store" }
+        );
         let st: LotteryState = { ok: false };
         try { st = await r.json(); } catch {}
         if (st.ok && st.lastWinner?.singer_id) {
           const name = st.lastWinner.display_name || null;
-          if (name && alive) {
-            // on ne joue pas l’anim rétroactivement, on affiche juste le nom
-            setWinnerName(name);
-          }
+          if (name && alive) setWinnerName(name); // pas d’anim rétroactive
         }
       } catch (e: any) {
         if (alive) setError(e?.message || String(e));
@@ -74,7 +71,7 @@ export default function LotteryDisplay({ slug }: { slug: string }) {
     return () => { alive = false; };
   }, [slug]);
 
-  // Realtime: écoute des INSERT sur lottery_winners filtré par room_id
+  // Realtime: écoute INSERT sur lottery_winners pour la room
   useEffect(() => {
     if (!roomId) return;
     const ch = supa
@@ -84,7 +81,6 @@ export default function LotteryDisplay({ slug }: { slug: string }) {
         { event: "INSERT", schema: "public", table: "lottery_winners", filter: `room_id=eq.${roomId}` },
         async (payload) => {
           try {
-            // payload.new: { room_id, singer_id, entry_id, created_at, ... }
             const singerId = (payload?.new as any)?.singer_id as string | undefined;
             let name: string | null = null;
             if (singerId) {
@@ -96,19 +92,15 @@ export default function LotteryDisplay({ slug }: { slug: string }) {
               name = (s?.display_name || "").trim() || null;
             }
             if (!name) {
-              // fallback sur /api/lottery/state
               const r = await fetch(`/api/lottery/state?room_slug=${encodeURIComponent(slug)}`, { cache: "no-store" });
               let st: LotteryState = { ok: false };
               try { st = await r.json(); } catch {}
               name = st?.lastWinner?.display_name || null;
             }
             if (!name) name = "🎉 Gagnant";
-
-            // animation → arrêt sur le nom
             runSlotAnimation(name);
-          } catch (e) {
-            // au pire: affiche direct sans anim
-            setWinnerName("🎉 Gagnant");
+          } catch {
+            setWinnerName("🎉 Gagnant"); // fallback sans anim
           }
         }
       )
@@ -117,7 +109,7 @@ export default function LotteryDisplay({ slug }: { slug: string }) {
     return () => { supa.removeChannel(ch); };
   }, [roomId, slug]);
 
-  // Armer le son (obligatoire pour lecture non bloquée)
+  // Son
   function armSound() {
     const a = new Audio("/ding.mp3");
     a.load();
@@ -125,7 +117,7 @@ export default function LotteryDisplay({ slug }: { slug: string }) {
     setSoundReady(true);
   }
 
-  // Confettis vanilla
+  // Confettis
   function fireConfetti(durationMs = 1800) {
     const container = document.createElement("div");
     container.style.position = "fixed";
@@ -151,8 +143,8 @@ export default function LotteryDisplay({ slug }: { slug: string }) {
       d.style.borderRadius = Math.random() < 0.3 ? "999px" : "3px";
       container.appendChild(d);
 
-      const fall = 100 + Math.random() * 40; // vh
-      const drift = (Math.random() - 0.5) * 40; // vw
+      const fall = 100 + Math.random() * 40;
+      const drift = (Math.random() - 0.5) * 40;
       const rot = (Math.random() - 0.5) * 720;
 
       d.animate(
@@ -164,12 +156,10 @@ export default function LotteryDisplay({ slug }: { slug: string }) {
       );
     }
 
-    setTimeout(() => {
-      container.remove();
-    }, durationMs);
+    setTimeout(() => { container.remove(); }, durationMs);
   }
 
-  // Slot animation: défilement rapide → ralentissement → stop sur winner
+  // Animation slot
   function runSlotAnimation(finalName: string) {
     setRolling(true);
     setWinnerName(null);
@@ -177,9 +167,8 @@ export default function LotteryDisplay({ slug }: { slug: string }) {
     const pool = names.length ? names : ["🎤", "🍻", "…", "???"];
     const displayEl = document.getElementById("slot-display")!;
     let idx = 0;
-    let interval = 50; // rapide au démarrage
+    const interval = 50;
 
-    // phase 1: 1.2s à vitesse constante
     const t0 = Date.now();
     const phase1 = setInterval(() => {
       displayEl.textContent = pool[idx % pool.length];
@@ -190,7 +179,6 @@ export default function LotteryDisplay({ slug }: { slug: string }) {
       }
     }, interval);
 
-    // phase 2: slowdown + stop
     function phase2() {
       let steps = 20;
       let current = 0;
@@ -271,7 +259,6 @@ export default function LotteryDisplay({ slug }: { slug: string }) {
             userSelect: "none",
           }}
         >
-          {/* Bandeau roulette */}
           <div
             style={{
               margin: "0 auto",
@@ -299,7 +286,6 @@ export default function LotteryDisplay({ slug }: { slug: string }) {
             </div>
           </div>
 
-          {/* sous-texte */}
           <div style={{ marginTop: 14, opacity: 0.85 }}>
             {rolling
               ? "Tirage en cours…"
@@ -308,7 +294,6 @@ export default function LotteryDisplay({ slug }: { slug: string }) {
               : "Clique sur Tirer au sort depuis la page Host"}
           </div>
 
-          {/* petite liste capsule (facultatif) */}
           {names.length > 0 && (
             <div
               style={{

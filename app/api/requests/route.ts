@@ -1,9 +1,6 @@
 // app/api/requests/route.ts
 import { NextRequest, NextResponse } from 'next/server';
 import { createAdminSupabaseClient } from '@/lib/supabaseServer';
-import { containsInsult } from '@/lib/profanity';
-import { detectProfanity } from '@/lib/profanity';
-
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -18,17 +15,21 @@ type Body = {
   karafun_id?: string | null;
 };
 
+// IP depuis proxy/Vercel
 function getClientIp(req: NextRequest): string {
   const xf = req.headers.get('x-forwarded-for');
-  if (xf) return xf.split(',')[0].trim();
+  if (xf) return xf.split(',')[0]?.trim() || '0.0.0.0';
   const xr = req.headers.get('x-real-ip');
   if (xr) return xr.trim();
-  return '0.0.0.0';
+  // En local, NextRequest.ip peut exister
+  // @ts-ignore
+  const direct = (req as any).ip as string | undefined;
+  return direct?.trim() || '0.0.0.0';
 }
 
+// /room/<slug> depuis le Referer si besoin
 function inferRoomSlugFromReferer(req: NextRequest): string | null {
   const ref = req.headers.get('referer') || '';
-  // ex: https://site/room/lantignie → slug=lantignie
   const m = ref.match(/\/room\/([^/?#]+)/i);
   return m?.[1] ? decodeURIComponent(m[1]) : null;
 }
@@ -45,7 +46,10 @@ export async function POST(req: NextRequest) {
     const karafun_id = body.karafun_id ?? null;
 
     if (!title || !artist) {
-      return NextResponse.json({ ok: false, error: 'Champs manquants (title, artist).' }, { status: 400 });
+      return NextResponse.json(
+        { ok: false, error: 'Champs manquants (title, artist).' },
+        { status: 400 }
+      );
     }
 
     // 1) Résoudre la salle (slug prioritaire, sinon id, sinon referer)
@@ -54,7 +58,10 @@ export async function POST(req: NextRequest) {
       let slug = (body.room_slug || '').trim();
       if (!slug) slug = inferRoomSlugFromReferer(req) || '';
       if (!slug) {
-        return NextResponse.json({ ok: false, error: 'room_slug requis (ou déduction impossible)' }, { status: 400 });
+        return NextResponse.json(
+          { ok: false, error: 'room_slug requis (ou déduction impossible)' },
+          { status: 400 }
+        );
       }
       const { data: room, error: eRoom } = await db
         .from('rooms')
@@ -69,22 +76,20 @@ export async function POST(req: NextRequest) {
     // 2) Trouver/créer le chanteur si singer_id non fourni
     let singerId = (body.singer_id || '').trim();
     const displayName = (body.display_name || '').trim();
-if (displayName) {
-  const insult = containsInsult(displayName);
-  if (insult) {
-    return NextResponse.json(
-      { ok: false, error: `Nom refusé : langage inapproprié (${insult}).` },
-      { status: 400 }
-    );
-  }
-}
-
-      const { data: existing } = await db
+    if (!singerId) {
+      if (!displayName) {
+        return NextResponse.json(
+          { ok: false, error: 'display_name ou singer_id requis' },
+          { status: 400 }
+        );
+      }
+      const { data: existing, error: eSel } = await db
         .from('singers')
         .select('id')
         .eq('room_id', roomId)
         .eq('display_name', displayName)
         .maybeSingle();
+      if (eSel) return NextResponse.json({ ok: false, error: eSel.message }, { status: 500 });
 
       if (existing?.id) {
         singerId = existing.id as string;
@@ -110,7 +115,10 @@ if (displayName) {
         .in('status', ['waiting', 'playing', 'done']);
       if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
       if ((count ?? 0) > 0) {
-        return NextResponse.json({ ok: false, error: 'Titre déjà présent (doublon interdit).' }, { status: 400 });
+        return NextResponse.json(
+          { ok: false, error: 'Titre déjà présent (doublon interdit).' },
+          { status: 400 }
+        );
       }
     }
 
@@ -124,12 +132,15 @@ if (displayName) {
         .in('status', ['waiting', 'playing']);
       if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
       if ((count ?? 0) >= 2) {
-        return NextResponse.json({ ok: false, error: '2 chansons max par chanteur.' }, { status: 400 });
+        return NextResponse.json(
+          { ok: false, error: '2 chansons max par chanteur.' },
+          { status: 400 }
+        );
       }
     }
 
-    // 5) 🔒 IP rules — (a) max 2 demandes actives par IP (waiting + playing)
-    //                  (b) cooldown 30 s entre deux demandes par IP (dans la même salle)
+    // 5) IP rules — (a) max 2 demandes actives par IP (waiting + playing)
+    //              (b) cooldown 30 s entre deux demandes par IP (dans la même salle)
     {
       // (a) plafond IP
       const { count, error } = await db
@@ -140,7 +151,10 @@ if (displayName) {
         .in('status', ['waiting', 'playing']);
       if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
       if ((count ?? 0) >= 2) {
-        return NextResponse.json({ ok: false, error: '2 chansons max par appareil.' }, { status: 400 });
+        return NextResponse.json(
+          { ok: false, error: '2 chansons max par appareil.' },
+          { status: 400 }
+        );
       }
 
       // (b) cooldown 30s
@@ -155,7 +169,10 @@ if (displayName) {
 
       const lastAt = last?.[0]?.created_at ? Date.parse(last[0].created_at as any) : 0;
       if (lastAt && Date.now() - lastAt < 30_000) {
-        return NextResponse.json({ ok: false, error: 'Merci d’attendre 30s avant une nouvelle demande.' }, { status: 400 });
+        return NextResponse.json(
+          { ok: false, error: 'Merci d’attendre 30s avant une nouvelle demande.' },
+          { status: 400 }
+        );
       }
     }
 
@@ -168,7 +185,10 @@ if (displayName) {
         .eq('status', 'waiting');
       if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
       if ((count ?? 0) >= 15) {
-        return NextResponse.json({ ok: false, error: 'File d’attente pleine (15 titres max).' }, { status: 400 });
+        return NextResponse.json(
+          { ok: false, error: 'File d’attente pleine (15 titres max).' },
+          { status: 400 }
+        );
       }
     }
 
@@ -178,12 +198,12 @@ if (displayName) {
       .insert({
         room_id: roomId,
         singer_id: singerId,
-        // Fallback legacy si ta table a encore la colonne texte `singer`
+        // Fallback legacy si ta table conserve la colonne texte `singer`
         singer: displayName || null,
         title,
         artist,
         karafun_id,
-        ip,
+        ip, // on enregistre l’IP pour audit et les règles ci-dessus
         status: 'waiting',
         created_at: new Date().toISOString(),
       })

@@ -14,7 +14,7 @@ type QueueResponse = {
   error?: string;
   playing: Item | null;
   waiting: Item[];
-  done: Item[]; // l'API renvoie aussi 'played' en alias, mais on normalise côté route
+  done: Item[];
 };
 
 type LotteryState = {
@@ -37,6 +37,43 @@ export default function HostClient({ slug }: { slug: string }) {
   const [busy, setBusy] = useState(false);
   const [lotteryBusy, setLotteryBusy] = useState(false);
   const [lotteryInfo, setLotteryInfo] = useState<LotteryState | null>(null);
+
+  // --- AJOUT: helpers pour gestion pause inscriptions ---
+  const [paused, setPaused] = useState<boolean | null>(null);
+  const [afterCutoff, setAfterCutoff] = useState<boolean>(false);
+  const [pauseBusy, setPauseBusy] = useState(false);
+
+  async function loadPauseState() {
+    try {
+      const r = await fetch(`/api/host/requests/state?room_slug=${encodeURIComponent(slug)}`, { cache: "no-store" });
+      const j = await r.json();
+      if (j?.ok) {
+        setPaused(!!j.paused);
+        setAfterCutoff(!!j.afterCutoff);
+      }
+    } catch {}
+  }
+
+  useEffect(() => { loadPauseState(); }, [slug]);
+
+  async function togglePause(next: boolean) {
+    if (pauseBusy) return;
+    setPauseBusy(true);
+    try {
+      const r = await fetch("/api/host/requests/pause", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ room_slug: slug, paused: next }),
+      });
+      const j = await r.json();
+      if (j?.ok) {
+        setPaused(!!j.paused);
+      }
+    } finally {
+      setPauseBusy(false);
+    }
+  }
+  // --- fin AJOUT helpers ---
 
   // --- Styles sobres ---
   const card: React.CSSProperties = {
@@ -61,21 +98,17 @@ export default function HostClient({ slug }: { slug: string }) {
     fontWeight: 600,
   };
 
-  // --- Fetch résilient (ne jette jamais) ---
+  // --- Fetch résilient ---
   async function fetchQueue(): Promise<QueueResponse> {
     try {
       const r = await fetch(`/api/host/queue?room_slug=${encodeURIComponent(slug)}`, { cache: "no-store" });
-      if (!r.ok) {
-        const txt = await r.text().catch(() => "");
-        throw new Error(`GET /api/host/queue ${r.status} ${txt}`);
-      }
-      const d = (await r.json()) as any;
+      if (!r.ok) throw new Error(`GET /api/host/queue ${r.status}`);
+      const d = await r.json();
       return {
         ok: !!d.ok,
         error: d.error,
         playing: d.playing ?? null,
         waiting: Array.isArray(d.waiting) ? d.waiting : [],
-        // l’API renvoie 'played' et 'done' → on prend 'done'
         done: Array.isArray(d.done) ? d.done : (Array.isArray(d.played) ? d.played : []),
       };
     } catch (e) {
@@ -114,7 +147,6 @@ export default function HostClient({ slug }: { slug: string }) {
     [data.waiting]
   );
 
-  // --- Action: Lire la suivante (contrat: POST /api/host/play { room_slug })
   async function handleNext() {
     if (busy || !canNext) return;
     setBusy(true);
@@ -124,12 +156,8 @@ export default function HostClient({ slug }: { slug: string }) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ room_slug: slug }),
       });
-      let j: any = {};
-      try { j = await r.json(); } catch {}
-      if (!r.ok || j?.ok === false) {
-        throw new Error(j?.error || `HTTP ${r.status}`);
-      }
-      // refetch pour afficher l’état à jour
+      const j = await r.json();
+      if (!r.ok || j?.ok === false) throw new Error(j?.error || `HTTP ${r.status}`);
       const d = await fetchQueue();
       setData(d);
       setErr(d.ok ? null : d.error || "Erreur");
@@ -141,7 +169,6 @@ export default function HostClient({ slug }: { slug: string }) {
     }
   }
 
-  // --- Lottery: tirage + état ---
   async function handleDraw() {
     if (lotteryBusy) return;
     setLotteryBusy(true);
@@ -151,8 +178,7 @@ export default function HostClient({ slug }: { slug: string }) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ room_slug: slug }),
       });
-      let j: any = {};
-      try { j = await r.json(); } catch {}
+      const j = await r.json();
       if (!r.ok || j?.ok === false) throw new Error(j?.error || `HTTP ${r.status}`);
       const st = await fetchLotteryState();
       setLotteryInfo(st);
@@ -166,21 +192,15 @@ export default function HostClient({ slug }: { slug: string }) {
   async function handleRefreshLottery() {
     const st = await fetchLotteryState();
     setLotteryInfo(st);
-    if (!st.ok && st.error) {
-      console.warn("Lottery state:", st.error);
-    }
+    if (!st.ok && st.error) console.warn("Lottery state:", st.error);
   }
 
-  // --- Retirer une demande (soft delete via DELETE /api/requests/:id)
   async function removeRequest(id: string | number | undefined) {
     if (!id && id !== 0) return;
-    const url = `/api/requests/${encodeURIComponent(String(id))}`;
     try {
-      const r = await fetch(url, { method: "DELETE" });
-      let j: any = {};
-      try { j = await r.json(); } catch {}
+      const r = await fetch(`/api/requests/${encodeURIComponent(String(id))}`, { method: "DELETE" });
+      const j = await r.json();
       if (!r.ok || j?.ok !== true) throw new Error(j?.error || `HTTP ${r.status}`);
-      // Recharger la file
       const d = await fetchQueue();
       setData(d);
       setErr(d.ok ? null : d.error || "Erreur");
@@ -189,20 +209,8 @@ export default function HostClient({ slug }: { slug: string }) {
     }
   }
 
-  // --- util copier ---
   const copy = async (txt: string) => {
-    try {
-      await navigator.clipboard.writeText(txt);
-    } catch {
-      const ta = document.createElement("textarea");
-      ta.value = txt;
-      ta.style.position = "fixed";
-      ta.style.left = "-9999px";
-      document.body.appendChild(ta);
-      ta.select();
-      document.execCommand("copy");
-      document.body.removeChild(ta);
-    }
+    try { await navigator.clipboard.writeText(txt); } catch {}
   };
 
   return (
@@ -212,24 +220,12 @@ export default function HostClient({ slug }: { slug: string }) {
           🎛️ Host · {isLantignie ? "Lantignié" : slug}
         </h1>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-          <button
-            onClick={handleNext}
-            disabled={!canNext || busy}
-            aria-busy={busy}
-            style={btnPrimary}
-            title="Lire la suivante (playing → done, 1er waiting → playing)"
-          >
+          <button onClick={handleNext} disabled={!canNext || busy} aria-busy={busy} style={btnPrimary}>
             ⏭ Lire la suivante
           </button>
-          <button
-            onClick={async () => {
-              const d = await fetchQueue();
-              setData(d);
-              setErr(d.ok ? null : d.error || "Erreur");
-            }}
-            style={btn}
-            title="Rafraîchir"
-          >
+          <button onClick={async () => {
+              const d = await fetchQueue(); setData(d); setErr(d.ok ? null : d.error || "Erreur");
+            }} style={btn}>
             ↻
           </button>
         </div>
@@ -237,123 +233,107 @@ export default function HostClient({ slug }: { slug: string }) {
 
       {err && (
         <div style={{ marginBottom: 12, padding: 8, border: "1px solid #f5b3b3", color: "#a40000", borderRadius: 8 }}>
-          ⚠️ API: {err} — l’interface reste fonctionnelle, nouvel essai automatique en cours…
+          ⚠️ API: {err}
         </div>
       )}
 
-      {/* En cours (aucun bouton copier ici, comme demandé) */}
+      {/* En cours */}
       <section style={{ ...card, marginBottom: 16 }}>
-        <h2 style={{ marginTop: 0 }}>🎶 En cours</h2>
+        <h2>🎶 En cours</h2>
         {data.playing ? (
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
-            <div>
-              <div style={{ fontSize: 18, fontWeight: 700 }}>{data.playing.title}</div>
-              <div style={{ opacity: 0.75 }}>{data.playing.artist}</div>
-              {!!data.playing.display_name && (
-                <div style={{ marginTop: 4 }}>👤 {data.playing.display_name}</div>
-              )}
-            </div>
+          <div>
+            <div style={{ fontSize: 18, fontWeight: 700 }}>{data.playing.title}</div>
+            <div style={{ opacity: 0.75 }}>{data.playing.artist}</div>
+            {!!data.playing.display_name && <div>👤 {data.playing.display_name}</div>}
           </div>
         ) : (
           <div style={{ opacity: 0.7 }}>Aucune chanson en cours.</div>
         )}
       </section>
 
-      {/* Grille 2 colonnes : File / Passées */}
+      {/* File d’attente + passées */}
       <section style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
         <div style={card}>
-          <h2 style={{ marginTop: 0 }}>🕒 File d’attente ({data.waiting?.length ?? 0})</h2>
+          <h2>🕒 File d’attente ({data.waiting?.length ?? 0})</h2>
           {Array.isArray(data.waiting) && data.waiting.length > 0 ? (
-            <ol style={{ listStyle: "none", padding: 0, margin: 0 }}>
+            <ol style={{ listStyle: "none", padding: 0 }}>
               {data.waiting.map((r, idx) => (
-                <li
-                  key={(r.id ?? idx).toString()}
-                  style={{
-                    padding: "8px 0",
-                    borderBottom: "1px solid #f1f1f1",
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "space-between",
-                    gap: 8,
-                  }}
-                >
-                  <div style={{ minWidth: 0 }}>
-                    <div style={{ fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                      {idx + 1}. {r.title}
-                    </div>
-                    <div style={{ opacity: 0.75 }}>{r.artist}</div>
-                    {!!r.display_name && <div style={{ opacity: 0.85 }}>👤 {r.display_name}</div>}
-                  </div>
-
-                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                    {/* Sur les 2 premiers : deux boutons copier (titre+artiste ET nom) */}
-                    {idx < 2 && (
-                      <>
-                        <button
-                          style={btn}
-                          onClick={() => copy(`${r.title} — ${r.artist}`)}
-                          title="Copier titre + artiste"
-                        >
-                          📋 Copier titre + artiste
-                        </button>
-
-                        <button
-                          style={{
-                            ...btn,
-                            cursor: r.display_name ? "pointer" : "not-allowed",
-                            opacity: r.display_name ? 1 : 0.6,
-                          }}
-                          onClick={() => {
-                            const name = (r.display_name || "").trim();
-                            if (name) copy(name);
-                          }}
-                          disabled={!r.display_name}
-                          title="Copier nom du chanteur"
-                        >
-                          📋 Copier nom
-                        </button>
-                      </>
-                    )}
-
-                    {/* Nouveau bouton Retirer */}
-                    <button
-                      style={{ ...btn, borderColor: "#e4c0c0", background: "#ffecec" }}
-                      onClick={() => removeRequest(r.id)}
-                      title="Retirer de la file"
-                    >
-                      🗑 Retirer
-                    </button>
-                  </div>
+                <li key={(r.id ?? idx).toString()} style={{ padding: "8px 0", borderBottom: "1px solid #f1f1f1" }}>
+                  <div style={{ fontWeight: 600 }}>{idx + 1}. {r.title}</div>
+                  <div style={{ opacity: 0.75 }}>{r.artist}</div>
+                  {!!r.display_name && <div>👤 {r.display_name}</div>}
+                  <button style={{ ...btn, borderColor: "#e4c0c0", background: "#ffecec" }} onClick={() => removeRequest(r.id)}>
+                    🗑 Retirer
+                  </button>
                 </li>
               ))}
             </ol>
-          ) : (
-            <div style={{ opacity: 0.7 }}>Rien en attente.</div>
-          )}
+          ) : <div style={{ opacity: 0.7 }}>Rien en attente.</div>}
         </div>
 
         <div style={card}>
-          <h2 style={{ marginTop: 0 }}>✅ Déjà passées</h2>
+          <h2>✅ Déjà passées</h2>
           {Array.isArray(data.done) && data.done.length > 0 ? (
-            <ol style={{ listStyle: "none", padding: 0, margin: 0, maxHeight: "60vh", overflow: "auto" }}>
+            <ol style={{ listStyle: "none", padding: 0 }}>
               {data.done.map((r, idx) => (
                 <li key={(r.id ?? `p-${idx}`).toString()} style={{ padding: "8px 0", borderBottom: "1px solid #f1f1f1" }}>
                   <div style={{ fontWeight: 600 }}>{r.title}</div>
                   <div style={{ opacity: 0.75 }}>{r.artist}</div>
-                  {!!r.display_name && <div style={{ opacity: 0.85 }}>👤 {r.display_name}</div>}
+                  {!!r.display_name && <div>👤 {r.display_name}</div>}
                 </li>
               ))}
             </ol>
-          ) : (
-            <div style={{ opacity: 0.7 }}>Aucune chanson passée pour l’instant.</div>
-          )}
+          ) : <div style={{ opacity: 0.7 }}>Aucune chanson passée.</div>}
         </div>
       </section>
 
+      {/* AJOUT : Bloc gestion inscriptions */}
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 8,
+          margin: "8px 0 12px",
+          padding: "8px 10px",
+          border: "1px solid rgba(0,0,0,.1)",
+          borderRadius: 8,
+          background: "#fafafa",
+        }}
+      >
+        <span style={{ fontWeight: 600 }}>Inscriptions :</span>
+        {paused === null ? (
+          <span>Chargement…</span>
+        ) : paused ? (
+          <span style={{ color: "#b00020" }}>🔒 Suspendues</span>
+        ) : afterCutoff ? (
+          <span style={{ color: "#b00020" }}>⏰ Coupure auto (≥ 23:45)</span>
+        ) : (
+          <span style={{ color: "#0a6" }}>✅ Ouvertes</span>
+        )}
+        <div style={{ flex: 1 }} />
+        <button
+          onClick={() => togglePause(!paused)}
+          disabled={pauseBusy}
+          style={{
+            padding: "6px 10px",
+            borderRadius: 8,
+            border: "1px solid rgba(0,0,0,.15)",
+            background: paused ? "#10b981" : "#ef4444",
+            color: "#fff",
+            fontWeight: 700,
+            cursor: "pointer",
+          }}
+          title={paused ? "Réactiver les inscriptions" : "Suspendre les inscriptions"}
+        >
+          {paused ? "Réactiver" : "Suspendre"}
+        </button>
+      </div>
+      {/* fin AJOUT */}
+
       {/* Loterie (Host) */}
       <section style={{ ...card, marginTop: 16 }}>
-        <h2 style={{ marginTop: 0 }}>🎲 Tirage au sort (Host)</h2>
-        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+        <h2>🎲 Tirage au sort (Host)</h2>
+        <div style={{ display: "flex", gap: 8 }}>
           <button onClick={handleDraw} disabled={lotteryBusy} style={btnPrimary}>
             {lotteryBusy ? "…" : "Tirer au sort"}
           </button>
@@ -362,19 +342,16 @@ export default function HostClient({ slug }: { slug: string }) {
           </button>
         </div>
         {!!lotteryInfo && (
-          <div style={{ marginTop: 8, opacity: 0.9 }}>
+          <div style={{ marginTop: 8 }}>
             {lotteryInfo.ok ? (
               <>
                 <div>Inscriptions : <strong>{lotteryInfo.entriesCount ?? "?"}</strong></div>
                 {lotteryInfo.lastWinner ? (
                   <div>
-                    Dernier gagnant :{" "}
-                    <strong>{lotteryInfo.lastWinner.display_name || lotteryInfo.lastWinner.singer_id}</strong>{" "}
+                    Dernier gagnant : <strong>{lotteryInfo.lastWinner.display_name || lotteryInfo.lastWinner.singer_id}</strong>{" "}
                     ({new Date(lotteryInfo.lastWinner.created_at).toLocaleString()})
                   </div>
-                ) : (
-                  <div>Aucun gagnant récent.</div>
-                )}
+                ) : <div>Aucun gagnant récent.</div>}
               </>
             ) : (
               <div style={{ color: "#a40000" }}>Erreur loterie : {lotteryInfo.error}</div>
@@ -382,18 +359,6 @@ export default function HostClient({ slug }: { slug: string }) {
           </div>
         )}
       </section>
-
-      {/* Responsive */}
-      <style jsx>{`
-        @media (max-width: 900px) {
-          section:nth-of-type(3) {
-            display: block !important;
-          }
-          section:nth-of-type(3) > div + div {
-            margin-top: 16px;
-          }
-        }
-      `}</style>
     </main>
   );
 }

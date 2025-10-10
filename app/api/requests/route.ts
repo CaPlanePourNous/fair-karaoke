@@ -16,6 +16,19 @@ type Body = {
   karafun_id?: string | null;
 };
 
+// 🔧 util cutoff (Europe/Paris) — AJOUT
+function isAfterCutoffParis(d = new Date()): boolean {
+  const parts = new Intl.DateTimeFormat("fr-FR", {
+    timeZone: "Europe/Paris",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).formatToParts(d);
+  const h = Number(parts.find(p => p.type === "hour")?.value ?? "0");
+  const m = Number(parts.find(p => p.type === "minute")?.value ?? "0");
+  return h > 23 || (h === 23 && m >= 45);
+}
+
 function getClientIp(req: NextRequest): string {
   const xf = req.headers.get('x-forwarded-for');
   if (xf) return xf.split(',')[0].trim();
@@ -61,6 +74,30 @@ export async function POST(req: NextRequest) {
       if (eRoom) return NextResponse.json({ ok: false, error: eRoom.message }, { status: 500 });
       if (!room) return NextResponse.json({ ok: false, error: 'Salle inconnue' }, { status: 404 });
       roomId = room.id as string;
+    }
+
+    // 🔒 verrouillage horaire (23:45 Europe/Paris et après) — AJOUT
+    if (isAfterCutoffParis()) {
+      return NextResponse.json(
+        { ok: false, error: "INSCRIPTIONS_CLOSED_CUTOFF" },
+        { status: 403 }
+      );
+    }
+
+    // 🔒 verrouillage manuel (bouton Host) — AJOUT
+    {
+      const { data: state, error: eState } = await db
+        .from("rooms")
+        .select("requests_paused")
+        .eq("id", roomId)
+        .maybeSingle();
+      if (eState) return NextResponse.json({ ok: false, error: eState.message }, { status: 500 });
+      if (state?.requests_paused) {
+        return NextResponse.json(
+          { ok: false, error: "INSCRIPTIONS_PAUSED" },
+          { status: 403 }
+        );
+      }
     }
 
     // 2) Trouver/créer le chanteur si singer_id non fourni

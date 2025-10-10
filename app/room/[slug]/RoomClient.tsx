@@ -41,6 +41,9 @@ function toUserMessage(raw: unknown): string {
   if (s.includes('30s') || s.includes('rate limit')) return "Doucement 🙂 Attends 30 secondes avant d’envoyer une nouvelle demande.";
   if (s.includes('foreign key') || s.includes('not found')) return "Salle ou chanteur introuvable. Recharge la page puis réessaie.";
   if (s.includes('failed to fetch') || s.includes('network')) return "Problème réseau. Vérifie ta connexion et réessaie.";
+  if (s.includes('inscriptions_paused')) return "Les inscriptions sont momentanément suspendues.";
+  if (s.includes('inscriptions_closed_cutoff')) return "Les inscriptions sont fermées pour ce soir (après 23:15).";
+
   return "Oups… une erreur est survenue. Réessaie, ou choisis un autre titre.";
 }
 

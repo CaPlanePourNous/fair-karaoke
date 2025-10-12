@@ -345,29 +345,18 @@ export default function HostClient({ slug }: { slug: string }) {
           {Array.isArray(data.done) && data.done.length > 0 ? (
             <ol style={{ listStyle: "none", padding: 0, margin: 0, maxHeight: "60vh", overflow: "auto" }}>
               {data.done.map((r, idx) => (
-                <li key={(r.id ?? `p-${idx}`).toString()} style={{ padding: "8px 0", borderBottom: "1px solid #f1f1f1" }}>
-                  <div style={{ fontWeight: 600 }}>{r.title}</div>
-                  <div style={{ opacity: 0.75 }}>{r.artist}</div>
-                  {!!r.display_name && <div style={{ opacity: 0.85 }}>👤 {r.display_name}</div>}
-                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 6 }}>
-                    <button
-                      title="Copier titre + artiste"
-                      style={pill}
-                      onClick={() => copy(fmtTitleArtist(r))}
-                    >
-                      📋 Copier titre + artiste
-                    </button>
-                    {!!r.display_name && (
-                      <button
-                        title="Copier nom du chanteur"
-                        style={pill}
-                        onClick={() => copy(fmtSinger(r))}
-                      >
-                        📋 Copier nom
-                      </button>
-                    )}
-                  </div>
-                </li>
+                <li
+  key={(r.id ?? `p-${idx}`).toString()}
+  style={{ padding: "8px 0", borderBottom: "1px solid #f1f1f1" }}
+>
+  <div style={{ fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+    {r.title}
+  </div>
+  <div style={{ opacity: 0.75, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+    {r.artist}
+  </div>
+</li>
+
               ))}
             </ol>
           ) : (

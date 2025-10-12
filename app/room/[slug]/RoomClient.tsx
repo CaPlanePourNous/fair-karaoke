@@ -248,7 +248,7 @@ if (!r.ok || j?.ok === false) {
   if (!won) {
     setTimeout(() => {
       setWon(true);
-      setMsg('🎉 Tu as été tiré au sort !');
+      setMsg('🎉 Vous avez été tiré(e) au sort !');
       if (ding) { ding.currentTime = 0; ding.play().catch(() => {}); }
       if (navigator.vibrate) navigator.vibrate([200, 100, 200]);
     }, LOTTERY_ANIMATION_DELAY_MS);
@@ -330,7 +330,7 @@ if (!r.ok || j?.ok === false) {
       <input
         value={q}
         onChange={e => setQ(e.target.value)}
-        placeholder="Tape un titre ou un artiste"
+        placeholder="Tapez un titre ou un artiste"
         style={{ width: '100%', padding: 8, margin: '6px 0 6px' }}
       />
 
@@ -406,7 +406,7 @@ if (!r.ok || j?.ok === false) {
           value={titleField}
           onChange={() => {}}
           readOnly
-          placeholder="Choisis un titre dans la liste"
+          placeholder="Choisissez un titre dans la liste."
           className="w-full rounded-md border px-3 py-2 bg-gray-50"
         />
 
@@ -423,7 +423,7 @@ if (!r.ok || j?.ok === false) {
           <button
             onClick={submitRequest}
             disabled={limitReached || !selected}
-            title={!selected ? 'Sélectionne un titre dans la liste' : 'Envoyer la demande'}
+            title={!selected ? 'Sélectionnez un titre dans la liste' : 'Envoyer la demande'}
             className={`rounded-md border px-4 py-2 ${limitReached || !selected ? 'opacity-50 cursor-not-allowed' : ''}`}
           >
             Demander ce titre
@@ -433,7 +433,7 @@ if (!r.ok || j?.ok === false) {
 
       <hr style={{ margin: '24px 0' }} />
       <h2>🎁 Tirage au sort</h2>
-      <p>Inscris ton nom pour participer (une inscription par personne).</p>
+      <p>Inscrivez votre nom pour participer (une inscription par personne).</p>
 
       <button
         onClick={async () => {
@@ -456,7 +456,7 @@ if (!r.ok || j?.ok === false) {
             if (!ok) {
               const code = d?.error || 'REGISTER_FAILED';
               const map: Record<string, string> = {
-                MISSING_DISPLAY_NAME: "Renseigne ton nom avant de t’inscrire.",
+                MISSING_DISPLAY_NAME: "Renseignez votre nom avant de vous inscrire.",
                 ROOM_NOT_FOUND: "Salle introuvable.",
                 DB_INSERT_SINGER_FAILED: "Inscription impossible (création du profil).",
                 DB_INSERT_ENTRY_NO_ID: "Inscription impossible (ID absent).",
@@ -482,7 +482,7 @@ if (!r.ok || j?.ok === false) {
 
       {!soundReady && (
         <p style={{ marginTop: 8 }}>
-          🔊 Pour être alerté si tu es tiré, active le son :
+          🔊 Pour être alerté(e) si vous êtes tiré(e) au sort, activez le son :
           <button onClick={armSound} style={{ marginLeft: 8, padding: '6px 10px' }}>
             Activer le son
           </button>

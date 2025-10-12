@@ -38,7 +38,7 @@ export default function HostClient({ slug }: { slug: string }) {
   const [lotteryBusy, setLotteryBusy] = useState(false);
   const [lotteryInfo, setLotteryInfo] = useState<LotteryState | null>(null);
 
-  // --- Pause inscriptions (Host) ---
+  // ---- Pause inscriptions (nouveau) ----
   const [paused, setPaused] = useState<boolean | null>(null);
   const [afterCutoff, setAfterCutoff] = useState<boolean>(false);
   const [pauseBusy, setPauseBusy] = useState(false);
@@ -53,7 +53,6 @@ export default function HostClient({ slug }: { slug: string }) {
       }
     } catch {}
   }
-
   useEffect(() => { loadPauseState(); }, [slug]);
 
   async function togglePause(next: boolean) {
@@ -71,42 +70,32 @@ export default function HostClient({ slug }: { slug: string }) {
       setPauseBusy(false);
     }
   }
-  // --- fin pause ---
+  // --------------------------------------
 
-  // --- Styles sobres ---
+  // Styles sobres (pills)
   const card: React.CSSProperties = {
     border: "1px solid #e6e6e6",
     borderRadius: 10,
     padding: 12,
     background: "#fff",
   };
-  const btn: React.CSSProperties = {
+  const pill: React.CSSProperties = {
     display: "inline-flex",
     alignItems: "center",
     gap: 8,
-    padding: "6px 10px",
+    padding: "8px 12px",
     border: "1px solid #ddd",
-    borderRadius: 8,
+    borderRadius: 999,
     background: "#f7f7f7",
     cursor: "pointer",
-    fontSize: 14,
   };
-  const btnPill: React.CSSProperties = {
-    ...btn,
-    borderRadius: 999,
-  };
-  const btnPrimary: React.CSSProperties = {
-    ...btnPill,
+  const pillPrimary: React.CSSProperties = {
+    ...pill,
     background: "#efefef",
-    fontWeight: 700,
-  };
-  const smallBtn: React.CSSProperties = {
-    ...btn,
-    padding: "4px 8px",
-    fontSize: 13,
+    fontWeight: 600,
   };
 
-  // --- Fetch résilient file d’attente ---
+  // Fetch file d’attente
   async function fetchQueue(): Promise<QueueResponse> {
     try {
       const r = await fetch(`/api/host/queue?room_slug=${encodeURIComponent(slug)}`, { cache: "no-store" });
@@ -171,7 +160,6 @@ export default function HostClient({ slug }: { slug: string }) {
       setErr(d.ok ? null : d.error || "Erreur");
     } catch (e: any) {
       setErr(String(e?.message || e));
-      alert(String(e?.message || "Impossible de passer à la suivante"));
     } finally {
       setBusy(false);
     }
@@ -186,11 +174,13 @@ export default function HostClient({ slug }: { slug: string }) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ room_slug: slug }),
       });
-      const j = await r.json();
+      let j: any = {};
+      try { j = await r.json(); } catch {}
       if (!r.ok || j?.ok === false) throw new Error(j?.error || `HTTP ${r.status}`);
       const st = await fetchLotteryState();
       setLotteryInfo(st);
     } catch (e: any) {
+      // pas d'alert -> pas d'anim redéclenchée
       console.warn("Lottery draw failed:", e?.message || e);
     } finally {
       setLotteryBusy(false);
@@ -200,7 +190,6 @@ export default function HostClient({ slug }: { slug: string }) {
   async function handleRefreshLottery() {
     const st = await fetchLotteryState();
     setLotteryInfo(st);
-    if (!st.ok && st.error) console.warn("Lottery state:", st.error);
   }
 
   async function removeRequest(id: string | number | undefined) {
@@ -213,202 +202,44 @@ export default function HostClient({ slug }: { slug: string }) {
       setData(d);
       setErr(d.ok ? null : d.error || "Erreur");
     } catch (e: any) {
-      alert(`Suppression impossible: ${e?.message || e}`);
+      console.warn("Suppression impossible:", e?.message || e);
     }
   }
 
-  // --- Copier / Coller ---
-  const [pasteBuf, setPasteBuf] = useState<string>(""); // affiche ce qui a été collé (readText)
+  // Copier
   const copy = async (txt: string) => {
-    try {
-      await navigator.clipboard.writeText(txt);
-    } catch {}
+    try { await navigator.clipboard.writeText(txt); } catch {}
   };
-  const paste = async () => {
-    try {
-      const t = await navigator.clipboard.readText();
-      setPasteBuf(t || "");
-    } catch {
-      setPasteBuf("(Accès presse-papiers refusé par le navigateur)");
-    }
-  };
-
-  // Raccourcis helpers
   const fmtTitleArtist = (r: Item) => `${r.title} - ${r.artist}`;
   const fmtSinger = (r: Item) => r.display_name?.trim() || "";
 
   return (
     <main style={{ maxWidth: 1100, margin: "0 auto", padding: 16 }}>
       <header style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, marginBottom: 12 }}>
-        <h1 style={{ margin: 0 }}>
-          🎛️ Host · {isLantignie ? "Lantignié" : slug}
-        </h1>
+        <h1 style={{ margin: 0 }}>🎛️ Host · {isLantignie ? "Lantignié" : slug}</h1>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-          <button onClick={handleNext} disabled={!canNext || busy} aria-busy={busy} style={btnPrimary}>
+          <button
+            aria-busy={busy}
+            onClick={handleNext}
+            disabled={!canNext || busy}
+            title="Lire la suivante (playing → done, 1er waiting → playing)"
+            style={pillPrimary}
+          >
             ⏭ Lire la suivante
           </button>
           <button
-            onClick={async () => {
-              const d = await fetchQueue(); setData(d); setErr(d.ok ? null : d.error || "Erreur");
-            }}
-            style={btnPill}
+            onClick={async () => { const d = await fetchQueue(); setData(d); setErr(d.ok ? null : d.error || "Erreur"); loadPauseState(); }}
             title="Rafraîchir"
+            style={pill}
           >
             ↻
           </button>
         </div>
       </header>
 
-      {/* Bandeau copier / coller global */}
+      {/* Nouveau : Suspendre / Réactiver inscriptions */}
       <section style={{ ...card, marginBottom: 12, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-        <strong>📋 Presse-papiers :</strong>
-        <button style={smallBtn} onClick={paste} title="Lire le presse-papiers (si autorisé par le navigateur)">
-          Coller ici
-        </button>
-        <input
-          value={pasteBuf}
-          onChange={(e) => setPasteBuf(e.target.value)}
-          placeholder="(Zone d’affichage du texte collé)"
-          style={{ flex: 1, minWidth: 220, padding: "6px 8px", border: "1px solid #ddd", borderRadius: 8 }}
-        />
-        <button style={smallBtn} onClick={() => copy(pasteBuf)} title="Copier à nouveau ce texte">
-          Copier
-        </button>
-      </section>
-
-      {err && (
-        <div style={{ marginBottom: 12, padding: 8, border: "1px solid #f5b3b3", color: "#a40000", borderRadius: 8 }}>
-          ⚠️ API: {err}
-        </div>
-      )}
-
-      {/* En cours */}
-      <section style={{ ...card, marginBottom: 16 }}>
-        <h2>🎶 En cours</h2>
-        {data.playing ? (
-          <div>
-            <div style={{ fontSize: 18, fontWeight: 700 }}>{data.playing.title}</div>
-            <div style={{ opacity: 0.75 }}>{data.playing.artist}</div>
-            {!!data.playing.display_name && <div>👤 {data.playing.display_name}</div>}
-
-            {/* Boutons copier pour EN COURS */}
-            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 8 }}>
-              <button
-                style={smallBtn}
-                onClick={() => copy(fmtTitleArtist(data.playing!))}
-                title="Copier Titre + Artiste"
-              >
-                📋 Copier titre + artiste
-              </button>
-              {!!data.playing.display_name && (
-                <button
-                  style={smallBtn}
-                  onClick={() => copy(fmtSinger(data.playing!))}
-                  title="Copier le chanteur"
-                >
-                  👤 Copier chanteur
-                </button>
-              )}
-            </div>
-          </div>
-        ) : (
-          <div style={{ opacity: 0.7 }}>Aucune chanson en cours.</div>
-        )}
-      </section>
-
-      {/* File d’attente + passées */}
-      <section style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
-        <div style={card}>
-          <h2>🕒 File d’attente ({data.waiting?.length ?? 0})</h2>
-          {Array.isArray(data.waiting) && data.waiting.length > 0 ? (
-            <ol style={{ listStyle: "none", padding: 0 }}>
-              {data.waiting.map((r, idx) => (
-                <li key={(r.id ?? idx).toString()} style={{ padding: "8px 0", borderBottom: "1px solid #f1f1f1" }}>
-                  <div style={{ fontWeight: 600 }}>{idx + 1}. {r.title}</div>
-                  <div style={{ opacity: 0.75 }}>{r.artist}</div>
-                  {!!r.display_name && <div>👤 {r.display_name}</div>}
-
-                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 6 }}>
-                    <button
-                      style={smallBtn}
-                      onClick={() => copy(fmtTitleArtist(r))}
-                      title="Copier Titre + Artiste"
-                    >
-                      📋 Copier titre + artiste
-                    </button>
-                    {!!r.display_name && (
-                      <button
-                        style={smallBtn}
-                        onClick={() => copy(fmtSinger(r))}
-                        title="Copier le chanteur"
-                      >
-                        👤 Copier chanteur
-                      </button>
-                    )}
-                    <button
-                      style={{ ...smallBtn, borderColor: "#e4c0c0", background: "#ffecec" }}
-                      onClick={() => removeRequest(r.id)}
-                      title="Retirer cette demande de la file"
-                    >
-                      🗑 Retirer
-                    </button>
-                  </div>
-                </li>
-              ))}
-            </ol>
-          ) : <div style={{ opacity: 0.7 }}>Rien en attente.</div>}
-        </div>
-
-        <div style={card}>
-          <h2>✅ Déjà passées</h2>
-          {Array.isArray(data.done) && data.done.length > 0 ? (
-            <ol style={{ listStyle: "none", padding: 0 }}>
-              {data.done.map((r, idx) => (
-                <li key={(r.id ?? `p-${idx}`).toString()} style={{ padding: "8px 0", borderBottom: "1px solid #f1f1f1" }}>
-                  <div style={{ fontWeight: 600 }}>{r.title}</div>
-                  <div style={{ opacity: 0.75 }}>{r.artist}</div>
-                  {!!r.display_name && <div>👤 {r.display_name}</div>}
-
-                  {/* Copier aussi dans "passées" si utile */}
-                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 6 }}>
-                    <button
-                      style={smallBtn}
-                      onClick={() => copy(fmtTitleArtist(r))}
-                      title="Copier Titre + Artiste"
-                    >
-                      📋 Copier titre + artiste
-                    </button>
-                    {!!r.display_name && (
-                      <button
-                        style={smallBtn}
-                        onClick={() => copy(fmtSinger(r))}
-                        title="Copier le chanteur"
-                      >
-                        👤 Copier chanteur
-                      </button>
-                    )}
-                  </div>
-                </li>
-              ))}
-            </ol>
-          ) : <div style={{ opacity: 0.7 }}>Aucune chanson passée.</div>}
-        </div>
-      </section>
-
-      {/* Gestion inscriptions */}
-      <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          gap: 8,
-          margin: "12px 0",
-          padding: "8px 10px",
-          border: "1px solid rgba(0,0,0,.1)",
-          borderRadius: 8,
-          background: "#fafafa",
-        }}
-      >
-        <span style={{ fontWeight: 600 }}>Inscriptions :</span>
+        <strong>Inscriptions :</strong>
         {paused === null ? (
           <span>Chargement…</span>
         ) : paused ? (
@@ -423,28 +254,136 @@ export default function HostClient({ slug }: { slug: string }) {
           onClick={() => togglePause(!paused)}
           disabled={pauseBusy}
           style={{
-            padding: "6px 10px",
-            borderRadius: 8,
-            border: "1px solid rgba(0,0,0,.15)",
-            background: paused ? "#10b981" : "#ef4444",
+            ...pill,
             color: "#fff",
+            background: paused ? "#10b981" : "#ef4444",
+            borderColor: paused ? "#0f9e6c" : "#d43a3a",
             fontWeight: 700,
-            cursor: "pointer",
           }}
           title={paused ? "Réactiver les inscriptions" : "Suspendre les inscriptions"}
         >
           {paused ? "Réactiver" : "Suspendre"}
         </button>
-      </div>
+      </section>
 
-      {/* Loterie (Host) */}
+      {err && (
+        <div style={{ marginBottom: 12, padding: 8, border: "1px solid #f5b3b3", color: "#a40000", borderRadius: 8 }}>
+          ⚠️ API: {err}
+        </div>
+      )}
+
+      {/* En cours */}
+      <section style={{ ...card, marginBottom: 16 }}>
+        <h2 style={{ marginTop: 0 }}>🎶 En cours</h2>
+        {data.playing ? (
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
+            <div>
+              <div style={{ fontSize: 18, fontWeight: 700 }}>{data.playing.title}</div>
+              <div style={{ opacity: 0.75 }}>{data.playing.artist}</div>
+              {!!data.playing.display_name && <div style={{ marginTop: 4 }}>👤 {data.playing.display_name}</div>}
+            </div>
+            {/* Pas d’actions ici, on reste fidèle à ta page “qui allait bien” */}
+          </div>
+        ) : (
+          <div style={{ opacity: 0.7 }}>Aucune chanson en cours.</div>
+        )}
+      </section>
+
+      {/* File d’attente + passées */}
+      <section style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+        <div style={card}>
+          <h2 style={{ marginTop: 0 }}>🕒 File d’attente ({data.waiting?.length ?? 0})</h2>
+          {Array.isArray(data.waiting) && data.waiting.length > 0 ? (
+            <ol style={{ listStyle: "none", padding: 0, margin: 0 }}>
+              {data.waiting.map((r, idx) => (
+                <li
+                  key={(r.id ?? idx).toString()}
+                  style={{ padding: "8px 0", borderBottom: "1px solid #f1f1f1", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}
+                >
+                  <div style={{ minWidth: 0 }}>
+                    <div style={{ fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                      {idx + 1}. {r.title}
+                    </div>
+                    <div style={{ opacity: 0.75 }}>{r.artist}</div>
+                    {!!r.display_name && <div style={{ opacity: 0.85 }}>👤 {r.display_name}</div>}
+                  </div>
+                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                    <button
+                      title="Copier titre + artiste"
+                      style={pill}
+                      onClick={() => copy(fmtTitleArtist(r))}
+                    >
+                      📋 Copier titre + artiste
+                    </button>
+                    {!!r.display_name && (
+                      <button
+                        title="Copier nom du chanteur"
+                        style={pill}
+                        onClick={() => copy(fmtSinger(r))}
+                      >
+                        📋 Copier nom
+                      </button>
+                    )}
+                    <button
+                      title="Retirer de la file"
+                      style={{ ...pill, borderColor: "#e4c0c0", background: "#ffecec" }}
+                      onClick={() => removeRequest(r.id)}
+                    >
+                      🗑 Retirer
+                    </button>
+                  </div>
+                </li>
+              ))}
+            </ol>
+          ) : (
+            <div style={{ opacity: 0.7 }}>Rien en attente.</div>
+          )}
+        </div>
+
+        <div style={card}>
+          <h2 style={{ marginTop: 0 }}>✅ Déjà passées</h2>
+          {Array.isArray(data.done) && data.done.length > 0 ? (
+            <ol style={{ listStyle: "none", padding: 0, margin: 0, maxHeight: "60vh", overflow: "auto" }}>
+              {data.done.map((r, idx) => (
+                <li key={(r.id ?? `p-${idx}`).toString()} style={{ padding: "8px 0", borderBottom: "1px solid #f1f1f1" }}>
+                  <div style={{ fontWeight: 600 }}>{r.title}</div>
+                  <div style={{ opacity: 0.75 }}>{r.artist}</div>
+                  {!!r.display_name && <div style={{ opacity: 0.85 }}>👤 {r.display_name}</div>}
+                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 6 }}>
+                    <button
+                      title="Copier titre + artiste"
+                      style={pill}
+                      onClick={() => copy(fmtTitleArtist(r))}
+                    >
+                      📋 Copier titre + artiste
+                    </button>
+                    {!!r.display_name && (
+                      <button
+                        title="Copier nom du chanteur"
+                        style={pill}
+                        onClick={() => copy(fmtSinger(r))}
+                      >
+                        📋 Copier nom
+                      </button>
+                    )}
+                  </div>
+                </li>
+              ))}
+            </ol>
+          ) : (
+            <div style={{ opacity: 0.7 }}>Aucune chanson passée.</div>
+          )}
+        </div>
+      </section>
+
+      {/* Loterie */}
       <section style={{ ...card, marginTop: 16 }}>
-        <h2>🎲 Tirage au sort (Host)</h2>
+        <h2 style={{ marginTop: 0 }}>🎲 Tirage au sort (Host)</h2>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-          <button onClick={handleDraw} disabled={lotteryBusy} style={btnPrimary}>
+          <button onClick={handleDraw} disabled={lotteryBusy} style={pillPrimary}>
             {lotteryBusy ? "…" : "Tirer au sort"}
           </button>
-          <button onClick={handleRefreshLottery} style={btnPill}>
+          <button onClick={handleRefreshLottery} style={pill}>
             État loterie
           </button>
         </div>

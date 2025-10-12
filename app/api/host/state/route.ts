@@ -5,7 +5,6 @@ import { computeOrdering, type Req } from "@/lib/ordering";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-export const runtime = 'nodejs'
 
 
 const noStore = {

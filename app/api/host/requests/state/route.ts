@@ -3,7 +3,6 @@ import { createAdminSupabaseClient } from "@/lib/supabaseServer";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-export const runtime = 'nodejs'
 
 
 function isAfterCutoffParis(d = new Date()): boolean {

@@ -37,7 +37,7 @@ function HomeInner() {
 
   return (
     <main style={{ maxWidth: 720, margin: '0 auto', padding: '16px' }}>
-     <div>
+      <div>
         <h1 className="text-2xl font-semibold mb-3">Fair-Karaoké</h1>
         <p className="text-sm text-neutral-600 mb-4">
           Entrez le <strong>code</strong> ou <strong>nom de la salle</strong> pour rejoindre.
@@ -46,16 +46,17 @@ function HomeInner() {
         <form onSubmit={go} className="space-y-3">
           <label className="block text-sm font-medium text-neutral-800">
             Code ou nom de salle
-	<div className="mt-1 max-w-sm">
-            <input
-              autoFocus
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              placeholder="ex. Code ou nom de salle"
-		maxLength={30}
-		inputMode="text"
-              className="mt-1 w-full rounded-lg border border-neutral-300 bg-white px-3 py-2 text-neutral-900 outline-none focus:ring-2 focus:ring-neutral-800"
-            />
+            <div className="mt-1 max-w-sm">
+              <input
+                autoFocus
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                placeholder="ex. Code ou nom de salle"
+                maxLength={30}
+                inputMode="text"
+                className="w-full rounded-lg border border-neutral-300 bg-white px-3 py-2 text-neutral-900 outline-none focus:ring-2 focus:ring-neutral-800"
+              />
+            </div>
           </label>
 
           <button

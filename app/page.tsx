@@ -1,6 +1,11 @@
-"use client";
+// app/page.tsx
+'use client';
+import { Suspense } from "react";
 import { useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
+
+export const dynamic = 'force-dynamic';
+
 
 function slugify(input: string) {
   return input
@@ -12,7 +17,8 @@ function slugify(input: string) {
     .replace(/-+/g, "-");
 }
 
-export default function HomePage() {
+// ⬇️ Nouveau composant interne, celui qui utilise useSearchParams
+function HomeInner() {
   const router = useRouter();
   const qs = useSearchParams();
   const [name, setName] = useState("");
@@ -65,5 +71,14 @@ export default function HomePage() {
         )}
       </div>
     </main>
+  );
+}
+
+// ⬇️ La page exportée entoure HomeInner d’une Suspense (exigé par Next)
+export default function HomePage() {
+  return (
+    <Suspense fallback={null}>
+      <HomeInner />
+    </Suspense>
   );
 }

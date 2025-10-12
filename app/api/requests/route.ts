@@ -16,7 +16,7 @@ type Body = {
   karafun_id?: string | null;
 };
 
-// 🔧 util cutoff (Europe/Paris) — AJOUT
+// 🔧 util cutoff (Europe/Paris)
 function isAfterCutoffParis(d = new Date()): boolean {
   const parts = new Intl.DateTimeFormat("fr-FR", {
     timeZone: "Europe/Paris",
@@ -76,7 +76,7 @@ export async function POST(req: NextRequest) {
       roomId = room.id as string;
     }
 
-    // 🔒 verrouillage horaire (23:45 Europe/Paris et après) — AJOUT
+    // 🔒 verrouillage horaire (23:45 Europe/Paris et après)
     if (isAfterCutoffParis()) {
       return NextResponse.json(
         { ok: false, error: "INSCRIPTIONS_CLOSED_CUTOFF" },
@@ -84,7 +84,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // 🔒 verrouillage manuel (bouton Host) — AJOUT
+    // 🔒 verrouillage manuel (bouton Host)
     {
       const { data: state, error: eState } = await db
         .from("rooms")
@@ -102,11 +102,12 @@ export async function POST(req: NextRequest) {
 
     // 2) Trouver/créer le chanteur si singer_id non fourni
     let singerId = (body.singer_id || '').trim();
-    const displayName = (body.display_name || '').trim();
 
-    // 🔒 Filtrage insultes
+    // --- PATCH minimal : normalisation + recherche case-insensible ---
+    const normName = (body.display_name || '').trim().replace(/\s+/g, ' ');
     {
-      const hit = detectProfanity(displayName);
+      // 🔒 Filtrage insultes
+      const hit = detectProfanity(normName);
       if (hit) {
         return NextResponse.json(
           { ok: false, error: `Nom refusé : langage inapproprié (${hit.term}).` },
@@ -116,15 +117,17 @@ export async function POST(req: NextRequest) {
     }
 
     if (!singerId) {
-      if (!displayName) {
+      if (!normName) {
         return NextResponse.json({ ok: false, error: 'display_name ou singer_id requis' }, { status: 400 });
       }
+
       const { data: existing, error: eSel } = await db
         .from('singers')
         .select('id')
         .eq('room_id', roomId)
-        .eq('display_name', displayName)
+        .ilike('display_name', normName) // ✅ recherche insensible à la casse
         .maybeSingle();
+
       if (eSel) return NextResponse.json({ ok: false, error: eSel.message }, { status: 500 });
 
       if (existing?.id) {
@@ -132,7 +135,7 @@ export async function POST(req: NextRequest) {
       } else {
         const { data: ins, error: eIns } = await db
           .from('singers')
-          .insert({ room_id: roomId, display_name: displayName, is_present: true })
+          .insert({ room_id: roomId, display_name: normName, is_present: true })
           .select('id')
           .single();
         if (eIns) return NextResponse.json({ ok: false, error: eIns.message }, { status: 500 });
@@ -215,7 +218,7 @@ export async function POST(req: NextRequest) {
       .insert({
         room_id: roomId,
         singer_id: singerId,
-        singer: displayName || null,
+        singer: normName || null,
         title,
         artist,
         karafun_id,

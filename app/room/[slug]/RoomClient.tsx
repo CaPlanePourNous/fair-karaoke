@@ -157,15 +157,15 @@ export default function RoomClient({ slug }: { slug: string }) {
   async function submitRequest() {
     const name = displayName.trim();
     if (!name) {
-      setMsg("Renseigne ton nom avant de demander un titre.");
+      setMsg("Renseignez votre nom avant de demander un titre.");
       return;
     }
     if (limitReached) {
-      setMsg("La file est pleine (≈15 titres / ~45 min). Réessaie plus tard.");
+      setMsg("La file est pleine (≈15 titres / ~45 min). Veuillez réessayer plus tard.");
       return;
     }
     if (!selected || !(selected.karafun_id ?? selected.id)) {
-      setMsg("Choisis un titre dans la liste.");
+      setMsg("Choisissez un titre dans la liste.");
       return;
     }
 
@@ -184,11 +184,16 @@ export default function RoomClient({ slug }: { slug: string }) {
           karafun_id: trackId,
         }),
       });
-      const j = await r.json().catch(() => ({}));
-      if (!r.ok || j?.ok === false) {
-        setMsg(toUserMessage(j?.error || 'UNKNOWN'));
-        return;
-      }
+      let j: any = null;
+try { j = await r.json(); } catch {}
+if (!r.ok || j?.ok === false) {
+  let errStr = j?.error ?? '';
+  if (!errStr) {
+    try { errStr = await r.text(); } catch {}
+  }
+  setMsg(toUserMessage(errStr || 'UNKNOWN'));
+  return;
+}
       setMsg('🎶 Demande enregistrée !');
       setQ('');
       setList([]);
@@ -222,7 +227,7 @@ export default function RoomClient({ slug }: { slug: string }) {
         () => {
 	setTimeout(() => {
           setWon(true);
-          setMsg('🎉 Tu as été tiré au sort !');
+          setMsg('🎉 Vous avez été tiré(e) au sort !');
           if (ding) { ding.currentTime = 0; ding.play().catch(() => {}); }
           if (navigator.vibrate) navigator.vibrate([200, 100, 200]);
         }, LOTTERY_ANIMATION_DELAY_MS);
@@ -435,7 +440,7 @@ export default function RoomClient({ slug }: { slug: string }) {
           if (lotteryLoading) return;
           const name = displayName.trim();
           if (!name) {
-            setMsg("Renseigne ton nom avant de t’inscrire au tirage.");
+            setMsg("Renseignez votre nom avant de vous inscrire au tirage.");
             return;
           }
           setLotteryLoading(true);

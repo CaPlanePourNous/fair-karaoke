@@ -12,18 +12,18 @@ export const metadata: Metadata = {
     default: "Fair-Karaoké",
     template: "%s — Fair-Karaoké",
   },
-  description: "Rejoignez votre salle et gérez la file d’attente équitablement.",
+  description: "Rejoignez votre salle de karaoké.",
   openGraph: {
     type: "website",
     siteName: "Fair-Karaoké",
     title: "Fair-Karaoké",
-    description: "Rejoignez votre salle et gérez la file d’attente équitablement.",
+    description: "Rejoignez votre salle de karaoké.",
     url: "https://fair-karaoke.com",
   },
   twitter: {
     card: "summary_large_image",
     title: "Fair-Karaoké",
-    description: "Rejoignez votre salle et gérez la file d’attente équitablement.",
+    description: "Rejoignez votre salle de karaoké",
   },
   icons: {
     icon: "/favicon.ico",

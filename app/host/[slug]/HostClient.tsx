@@ -38,7 +38,7 @@ export default function HostClient({ slug }: { slug: string }) {
   const [lotteryBusy, setLotteryBusy] = useState(false);
   const [lotteryInfo, setLotteryInfo] = useState<LotteryState | null>(null);
 
-  // --- AJOUT: helpers pour gestion pause inscriptions ---
+  // --- Pause inscriptions (Host) ---
   const [paused, setPaused] = useState<boolean | null>(null);
   const [afterCutoff, setAfterCutoff] = useState<boolean>(false);
   const [pauseBusy, setPauseBusy] = useState(false);
@@ -66,14 +66,12 @@ export default function HostClient({ slug }: { slug: string }) {
         body: JSON.stringify({ room_slug: slug, paused: next }),
       });
       const j = await r.json();
-      if (j?.ok) {
-        setPaused(!!j.paused);
-      }
+      if (j?.ok) setPaused(!!j.paused);
     } finally {
       setPauseBusy(false);
     }
   }
-  // --- fin AJOUT helpers ---
+  // --- fin pause ---
 
   // --- Styles sobres ---
   const card: React.CSSProperties = {
@@ -86,19 +84,29 @@ export default function HostClient({ slug }: { slug: string }) {
     display: "inline-flex",
     alignItems: "center",
     gap: 8,
-    padding: "8px 12px",
+    padding: "6px 10px",
     border: "1px solid #ddd",
-    borderRadius: 999,
+    borderRadius: 8,
     background: "#f7f7f7",
     cursor: "pointer",
+    fontSize: 14,
+  };
+  const btnPill: React.CSSProperties = {
+    ...btn,
+    borderRadius: 999,
   };
   const btnPrimary: React.CSSProperties = {
-    ...btn,
+    ...btnPill,
     background: "#efefef",
-    fontWeight: 600,
+    fontWeight: 700,
+  };
+  const smallBtn: React.CSSProperties = {
+    ...btn,
+    padding: "4px 8px",
+    fontSize: 13,
   };
 
-  // --- Fetch résilient ---
+  // --- Fetch résilient file d’attente ---
   async function fetchQueue(): Promise<QueueResponse> {
     try {
       const r = await fetch(`/api/host/queue?room_slug=${encodeURIComponent(slug)}`, { cache: "no-store" });
@@ -209,9 +217,25 @@ export default function HostClient({ slug }: { slug: string }) {
     }
   }
 
+  // --- Copier / Coller ---
+  const [pasteBuf, setPasteBuf] = useState<string>(""); // affiche ce qui a été collé (readText)
   const copy = async (txt: string) => {
-    try { await navigator.clipboard.writeText(txt); } catch {}
+    try {
+      await navigator.clipboard.writeText(txt);
+    } catch {}
   };
+  const paste = async () => {
+    try {
+      const t = await navigator.clipboard.readText();
+      setPasteBuf(t || "");
+    } catch {
+      setPasteBuf("(Accès presse-papiers refusé par le navigateur)");
+    }
+  };
+
+  // Raccourcis helpers
+  const fmtTitleArtist = (r: Item) => `${r.title} - ${r.artist}`;
+  const fmtSinger = (r: Item) => r.display_name?.trim() || "";
 
   return (
     <main style={{ maxWidth: 1100, margin: "0 auto", padding: 16 }}>
@@ -223,13 +247,34 @@ export default function HostClient({ slug }: { slug: string }) {
           <button onClick={handleNext} disabled={!canNext || busy} aria-busy={busy} style={btnPrimary}>
             ⏭ Lire la suivante
           </button>
-          <button onClick={async () => {
+          <button
+            onClick={async () => {
               const d = await fetchQueue(); setData(d); setErr(d.ok ? null : d.error || "Erreur");
-            }} style={btn}>
+            }}
+            style={btnPill}
+            title="Rafraîchir"
+          >
             ↻
           </button>
         </div>
       </header>
+
+      {/* Bandeau copier / coller global */}
+      <section style={{ ...card, marginBottom: 12, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+        <strong>📋 Presse-papiers :</strong>
+        <button style={smallBtn} onClick={paste} title="Lire le presse-papiers (si autorisé par le navigateur)">
+          Coller ici
+        </button>
+        <input
+          value={pasteBuf}
+          onChange={(e) => setPasteBuf(e.target.value)}
+          placeholder="(Zone d’affichage du texte collé)"
+          style={{ flex: 1, minWidth: 220, padding: "6px 8px", border: "1px solid #ddd", borderRadius: 8 }}
+        />
+        <button style={smallBtn} onClick={() => copy(pasteBuf)} title="Copier à nouveau ce texte">
+          Copier
+        </button>
+      </section>
 
       {err && (
         <div style={{ marginBottom: 12, padding: 8, border: "1px solid #f5b3b3", color: "#a40000", borderRadius: 8 }}>
@@ -245,6 +290,26 @@ export default function HostClient({ slug }: { slug: string }) {
             <div style={{ fontSize: 18, fontWeight: 700 }}>{data.playing.title}</div>
             <div style={{ opacity: 0.75 }}>{data.playing.artist}</div>
             {!!data.playing.display_name && <div>👤 {data.playing.display_name}</div>}
+
+            {/* Boutons copier pour EN COURS */}
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 8 }}>
+              <button
+                style={smallBtn}
+                onClick={() => copy(fmtTitleArtist(data.playing!))}
+                title="Copier Titre + Artiste"
+              >
+                📋 Copier titre + artiste
+              </button>
+              {!!data.playing.display_name && (
+                <button
+                  style={smallBtn}
+                  onClick={() => copy(fmtSinger(data.playing!))}
+                  title="Copier le chanteur"
+                >
+                  👤 Copier chanteur
+                </button>
+              )}
+            </div>
           </div>
         ) : (
           <div style={{ opacity: 0.7 }}>Aucune chanson en cours.</div>
@@ -262,9 +327,32 @@ export default function HostClient({ slug }: { slug: string }) {
                   <div style={{ fontWeight: 600 }}>{idx + 1}. {r.title}</div>
                   <div style={{ opacity: 0.75 }}>{r.artist}</div>
                   {!!r.display_name && <div>👤 {r.display_name}</div>}
-                  <button style={{ ...btn, borderColor: "#e4c0c0", background: "#ffecec" }} onClick={() => removeRequest(r.id)}>
-                    🗑 Retirer
-                  </button>
+
+                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 6 }}>
+                    <button
+                      style={smallBtn}
+                      onClick={() => copy(fmtTitleArtist(r))}
+                      title="Copier Titre + Artiste"
+                    >
+                      📋 Copier titre + artiste
+                    </button>
+                    {!!r.display_name && (
+                      <button
+                        style={smallBtn}
+                        onClick={() => copy(fmtSinger(r))}
+                        title="Copier le chanteur"
+                      >
+                        👤 Copier chanteur
+                      </button>
+                    )}
+                    <button
+                      style={{ ...smallBtn, borderColor: "#e4c0c0", background: "#ffecec" }}
+                      onClick={() => removeRequest(r.id)}
+                      title="Retirer cette demande de la file"
+                    >
+                      🗑 Retirer
+                    </button>
+                  </div>
                 </li>
               ))}
             </ol>
@@ -280,6 +368,26 @@ export default function HostClient({ slug }: { slug: string }) {
                   <div style={{ fontWeight: 600 }}>{r.title}</div>
                   <div style={{ opacity: 0.75 }}>{r.artist}</div>
                   {!!r.display_name && <div>👤 {r.display_name}</div>}
+
+                  {/* Copier aussi dans "passées" si utile */}
+                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 6 }}>
+                    <button
+                      style={smallBtn}
+                      onClick={() => copy(fmtTitleArtist(r))}
+                      title="Copier Titre + Artiste"
+                    >
+                      📋 Copier titre + artiste
+                    </button>
+                    {!!r.display_name && (
+                      <button
+                        style={smallBtn}
+                        onClick={() => copy(fmtSinger(r))}
+                        title="Copier le chanteur"
+                      >
+                        👤 Copier chanteur
+                      </button>
+                    )}
+                  </div>
                 </li>
               ))}
             </ol>
@@ -287,13 +395,13 @@ export default function HostClient({ slug }: { slug: string }) {
         </div>
       </section>
 
-      {/* AJOUT : Bloc gestion inscriptions */}
+      {/* Gestion inscriptions */}
       <div
         style={{
           display: "flex",
           alignItems: "center",
           gap: 8,
-          margin: "8px 0 12px",
+          margin: "12px 0",
           padding: "8px 10px",
           border: "1px solid rgba(0,0,0,.1)",
           borderRadius: 8,
@@ -328,16 +436,15 @@ export default function HostClient({ slug }: { slug: string }) {
           {paused ? "Réactiver" : "Suspendre"}
         </button>
       </div>
-      {/* fin AJOUT */}
 
       {/* Loterie (Host) */}
       <section style={{ ...card, marginTop: 16 }}>
         <h2>🎲 Tirage au sort (Host)</h2>
-        <div style={{ display: "flex", gap: 8 }}>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
           <button onClick={handleDraw} disabled={lotteryBusy} style={btnPrimary}>
             {lotteryBusy ? "…" : "Tirer au sort"}
           </button>
-          <button onClick={handleRefreshLottery} style={btn}>
+          <button onClick={handleRefreshLottery} style={btnPill}>
             État loterie
           </button>
         </div>

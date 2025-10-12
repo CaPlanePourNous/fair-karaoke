@@ -103,10 +103,9 @@ export async function POST(req: NextRequest) {
     // 2) Trouver/créer le chanteur si singer_id non fourni
     let singerId = (body.singer_id || '').trim();
 
-    // --- PATCH minimal : normalisation + recherche case-insensible ---
+    // Normalisation nom + filtre insultes
     const normName = (body.display_name || '').trim().replace(/\s+/g, ' ');
     {
-      // 🔒 Filtrage insultes
       const hit = detectProfanity(normName);
       if (hit) {
         return NextResponse.json(
@@ -121,25 +120,72 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ ok: false, error: 'display_name ou singer_id requis' }, { status: 400 });
       }
 
+      // 2.a — Chercher un chanteur existant portant *ce nom* (insensible à la casse) dans la même salle
       const { data: existing, error: eSel } = await db
         .from('singers')
-        .select('id')
+        .select('id, ip')
         .eq('room_id', roomId)
-        .ilike('display_name', normName) // ✅ recherche insensible à la casse
+        .ilike('display_name', normName)
         .maybeSingle();
-
       if (eSel) return NextResponse.json({ ok: false, error: eSel.message }, { status: 500 });
 
       if (existing?.id) {
+        // 2.b — Le nom existe déjà : autorisé uniquement si c’est *la même IP*
+        if (existing.ip && existing.ip !== ip) {
+          return NextResponse.json(
+            { ok: false, error: 'NAME_TAKEN_BY_OTHER_IP' },
+            { status: 409 }
+          );
+        }
+        // Même IP (ou IP inconnue sur l’ancien enregistrement) => on réutilise
         singerId = existing.id as string;
+
+        // (facultatif) s.ip vide -> on l’attache à l’IP actuelle pour la suite
+        if (!existing.ip) {
+          await db.from('singers').update({ ip }).eq('id', singerId);
+        }
       } else {
-        const { data: ins, error: eIns } = await db
+        // 2.c — Le nom n’existe pas : on crée le chanteur, rattaché à *cette* IP
+        const ins = await db
           .from('singers')
-          .insert({ room_id: roomId, display_name: normName, is_present: true })
+          .insert({ room_id: roomId, display_name: normName, ip, is_present: true })
           .select('id')
           .single();
-        if (eIns) return NextResponse.json({ ok: false, error: eIns.message }, { status: 500 });
-        singerId = ins.id as string;
+
+        if (ins.error) {
+          // En cas de concurrence et d’unicité, on retente en SELECT pour vérifier l’IP
+          const msg = (ins.error.message || '').toLowerCase();
+          const isUnique =
+            msg.includes('duplicate key value') ||
+            msg.includes('unique constraint');
+
+          if (!isUnique) {
+            return NextResponse.json({ ok: false, error: ins.error.message }, { status: 500 });
+          }
+
+          const { data: ex2, error: e2 } = await db
+            .from('singers')
+            .select('id, ip')
+            .eq('room_id', roomId)
+            .ilike('display_name', normName)
+            .maybeSingle();
+          if (e2) return NextResponse.json({ ok: false, error: e2.message }, { status: 500 });
+          if (!ex2?.id) {
+            return NextResponse.json({ ok: false, error: 'SINGER_UNIQUE_CONFLICT' }, { status: 500 });
+          }
+          if (ex2.ip && ex2.ip !== ip) {
+            return NextResponse.json(
+              { ok: false, error: 'NAME_TAKEN_BY_OTHER_IP' },
+              { status: 409 }
+            );
+          }
+          singerId = ex2.id as string;
+          if (!ex2.ip) {
+            await db.from('singers').update({ ip }).eq('id', singerId);
+          }
+        } else {
+          singerId = ins.data!.id as string;
+        }
       }
     }
 

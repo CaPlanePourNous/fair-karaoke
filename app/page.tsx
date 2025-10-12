@@ -36,7 +36,7 @@ function HomeInner() {
   }
 
   return (
-    <main className="min-h-screen flex items-center justify-center p-4 md:p-6 bg-white">
+    <main className="min-h-screen flex items-center justify-center bg-neutral-50 px-4 py-8 md:px-8">
       <div className="w-full max-w-md rounded-2xl border border-neutral-200 bg-white shadow-sm p-6">
         <h1 className="text-2xl font-semibold mb-3">Fair-Karaoké</h1>
         <p className="text-sm text-neutral-600 mb-4">
@@ -50,7 +50,7 @@ function HomeInner() {
               autoFocus
               value={name}
               onChange={(e) => setName(e.target.value)}
-              placeholder="ex. lantignie ou 1234"
+              placeholder="ex. Code ou nom de salle"
               className="mt-1 w-full rounded-lg border border-neutral-300 bg-white px-3 py-2 text-neutral-900 outline-none focus:ring-2 focus:ring-neutral-800"
             />
           </label>

@@ -98,7 +98,7 @@ export default function HostClient({ slug }: { slug: string }) {
   // Fetch file d’attente
   async function fetchQueue(): Promise<QueueResponse> {
     try {
-      const r = await fetch(`/api/host/requests?room_slug=${encodeURIComponent(slug)}`, { cache: "no-store" });
+      const r = await fetch(`/api/host/queue?room_slug=${encodeURIComponent(slug)}`, { cache: "no-store" });
       if (!r.ok) throw new Error(`GET /api/host/queue ${r.status}`);
       const d = await r.json();
       return {

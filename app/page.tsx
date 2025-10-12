@@ -45,7 +45,6 @@ function HomeInner() {
 
         <form onSubmit={go} className="space-y-3">
           <label className="block text-sm font-medium text-neutral-800">
-            Code ou nom de salle
             <div className="mt-1 max-w-sm">
               <input
                 autoFocus

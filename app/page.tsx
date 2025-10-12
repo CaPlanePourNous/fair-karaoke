@@ -1,11 +1,11 @@
 // app/page.tsx
 'use client';
-import { Suspense } from "react";
-import { useEffect, useMemo, useState } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
 
 export const dynamic = 'force-dynamic';
 
+import { Suspense } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 
 function slugify(input: string) {
   return input
@@ -17,7 +17,6 @@ function slugify(input: string) {
     .replace(/-+/g, "-");
 }
 
-// ⬇️ Nouveau composant interne, celui qui utilise useSearchParams
 function HomeInner() {
   const router = useRouter();
   const qs = useSearchParams();
@@ -37,44 +36,39 @@ function HomeInner() {
   }
 
   return (
-    <main className="min-h-screen flex items-center justify-center p-6">
-      <div className="w-full max-w-md rounded-2xl border p-6 shadow-sm">
-        <h1 className="text-2xl font-semibold mb-4">Fair-Karaoké</h1>
+    <main className="min-h-screen flex items-center justify-center p-4 md:p-6 bg-white">
+      <div className="w-full max-w-md rounded-2xl border border-neutral-200 bg-white shadow-sm p-6">
+        <h1 className="text-2xl font-semibold mb-3">Fair-Karaoké</h1>
         <p className="text-sm text-neutral-600 mb-4">
-          Entrez le nom de la salle pour rejoindre la Room.
+          Entrez le <strong>code</strong> ou <strong>nom de la salle</strong> pour rejoindre.
         </p>
+
         <form onSubmit={go} className="space-y-3">
-          <label className="block text-sm font-medium">
-            Nom de la salle
+          <label className="block text-sm font-medium text-neutral-800">
+            Code ou nom de salle
             <input
               autoFocus
               value={name}
               onChange={(e) => setName(e.target.value)}
-              placeholder="ex. lantignie"
-              className="mt-1 w-full rounded-lg border px-3 py-2 outline-none focus:ring-2"
+              placeholder="ex. lantignie ou 1234"
+              className="mt-1 w-full rounded-lg border border-neutral-300 bg-white px-3 py-2 text-neutral-900 outline-none focus:ring-2 focus:ring-neutral-800"
             />
           </label>
+
           <button
             type="submit"
             disabled={disabled}
-            className="w-full rounded-lg border px-3 py-2 font-medium disabled:opacity-50"
-            title={disabled ? "Saisir un nom de salle valide" : `Aller à /room/${slug}`}
+            className="w-full rounded-lg border border-neutral-300 bg-white px-3 py-2 font-medium text-neutral-900 shadow-sm hover:bg-neutral-50 disabled:opacity-50"
+            title={disabled ? "Saisissez un code ou un nom valide" : `Aller à /room/${slug}`}
           >
             Rejoindre la salle
           </button>
         </form>
-
-        {slug && (
-          <p className="mt-3 text-xs text-neutral-500">
-            URL cible : <code>/room/{slug}</code>
-          </p>
-        )}
       </div>
     </main>
   );
 }
 
-// ⬇️ La page exportée entoure HomeInner d’une Suspense (exigé par Next)
 export default function HomePage() {
   return (
     <Suspense fallback={null}>

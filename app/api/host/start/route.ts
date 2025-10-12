@@ -4,6 +4,8 @@ import { createAdminSupabaseClient } from "@/lib/supabaseServer";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+export const runtime = 'nodejs'
+
 
 const noStore = {
   "Cache-Control":

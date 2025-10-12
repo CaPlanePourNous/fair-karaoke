@@ -4,6 +4,8 @@ import { computeOrdering } from "@/lib/ordering";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+export const runtime = 'nodejs'
+
 
 const noStore = {
   "Cache-Control": "no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0, s-maxage=0",

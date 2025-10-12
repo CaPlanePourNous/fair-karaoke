@@ -27,24 +27,58 @@ function loadEntryId() {
 
 // Mapping d’erreurs techniques → messages clairs
 function toUserMessage(raw: unknown): string {
-  const s = String(raw || '').toLowerCase();
-  if (s.includes('singers_room_name_unique')) return "Ce nom est déjà utilisé ici. Ajoute une initiale ou choisis un autre nom.";
-  if (s.includes('lottery_entries') && s.includes('duplicate')) return "Tu es déjà inscrit au tirage 😉";
+  const s = String(raw || '').toLowerCase().trim();
+
+  if (s.includes('name_taken_by_other_ip')) {
+    return "Ce nom est déjà utilisé par quelqu’un d’autre dans cette salle. Veuillez choisir un autre nom ou un surnom.";
+  }
+
+  if (s.includes('singers_room_name_unique')) {
+    return "Ce nom est déjà utilisé ici. Veuillez ajouter une initiale ou choisir un autre nom.";
+  }
+
+  if (s.includes('lottery_entries') && s.includes('duplicate')) {
+    return "Vous êtes déjà inscrit(e) au tirage 😉";
+  }
+
   if (
     s.includes('duplicate key value') ||
     s.includes('unique constraint') ||
     s.includes('titre déjà présent') ||
     (s.includes('requests') && s.includes('duplicate'))
-  ) return "Ce titre est déjà dans la liste ou a déjà été chanté ce soir. Choisis-en un autre.";
-  if (s.includes('file pleine') || s.includes('max 15')) return "La file est pleine (≈15 titres / ~45 min). Réessaie un peu plus tard.";
-  if (s.includes('2 chansons max')) return "Tu as déjà 2 chansons en file. Attends qu’une passe avant d’en proposer une autre.";
-  if (s.includes('30s') || s.includes('rate limit')) return "Doucement 🙂 Attends 30 secondes avant d’envoyer une nouvelle demande.";
-  if (s.includes('foreign key') || s.includes('not found')) return "Salle ou chanteur introuvable. Recharge la page puis réessaie.";
-  if (s.includes('failed to fetch') || s.includes('network')) return "Problème réseau. Vérifie ta connexion et réessaie.";
-  if (s.includes('inscriptions_paused')) return "Les inscriptions sont momentanément suspendues.";
-  if (s.includes('inscriptions_closed_cutoff')) return "Les inscriptions sont fermées pour ce soir (après 23:15).";
+  ) {
+    return "Ce titre est déjà dans la liste ou a déjà été chanté ce soir. Veuillez en choisir un autre.";
+  }
 
-  return "Oups… une erreur est survenue. Réessaie, ou choisis un autre titre.";
+  if (s.includes('file pleine') || s.includes('max 15')) {
+    return "La file est pleine (≈15 titres / ~45 min). Veuillez réessayer un peu plus tard.";
+  }
+
+  if (s.includes('2 chansons max')) {
+    return "Vous avez déjà deux chansons dans la file. Attendez qu’une passe avant d’en proposer une autre.";
+  }
+
+  if (s.includes('30s') || s.includes('rate limit')) {
+    return "Merci de patienter 30 secondes avant d’envoyer une nouvelle demande 🙂";
+  }
+
+  if (s.includes('foreign key') || s.includes('not found')) {
+    return "Salle ou chanteur introuvable. Veuillez recharger la page puis réessayer.";
+  }
+
+  if (s.includes('failed to fetch') || s.includes('network')) {
+    return "Problème réseau. Vérifiez votre connexion et réessayez.";
+  }
+
+  if (s.includes('inscriptions_paused')) {
+    return "Les inscriptions sont momentanément suspendues par l’animateur.";
+  }
+
+  if (s.includes('inscriptions_closed_cutoff')) {
+    return "Les inscriptions sont fermées pour ce soir (après 23h45).";
+  }
+
+  return "Oups… une erreur est survenue. Veuillez réessayer ou choisir un autre titre.";
 }
 
 export default function RoomClient({ slug }: { slug: string }) {

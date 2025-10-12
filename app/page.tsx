@@ -37,7 +37,7 @@ function HomeInner() {
 
   return (
     <main className="min-h-screen px-4 py-6 bg-white">
-      <div className="w-full max-w-[720px] mx-auto">
+      <div className="w-full max-w-md mx-auto">
         <h1 className="text-2xl font-semibold mb-3">Fair-Karaoké</h1>
         <p className="text-sm text-neutral-600 mb-4">
           Entrez le <strong>code</strong> ou <strong>nom de la salle</strong> pour rejoindre.
